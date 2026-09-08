@@ -24,7 +24,6 @@ const xvfbMarker = "INREVIEW_INTEGRATION_XVFB";
 async function runUnderVirtualDisplayIfNeeded(): Promise<number | undefined> {
   if (
     process.platform !== "linux" ||
-    process.env.DISPLAY ||
     process.env[xvfbMarker]
   ) {
     return undefined;

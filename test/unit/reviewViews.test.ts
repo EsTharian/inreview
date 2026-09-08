@@ -10,6 +10,7 @@ import {
 import { buildCommentGroups } from "../../src/vscode/commentsTree";
 import {
   ReviewCommandController,
+  type CommandQuickPickItem,
   type CommandUi,
   type ReviewCommandService,
   type WorkspacePreferenceStore,
@@ -113,7 +114,7 @@ describe("review command flows", () => {
       "3",
       [
         "Archive Current Review",
-        "Current Stack (Last X)",
+        "Workspace Stack (Last X)",
         "Start Review",
         "Continue",
       ],
@@ -178,7 +179,12 @@ describe("review command flows", () => {
       .mockResolvedValueOnce({ record, addedChangeCount: 2 });
     service.beginIncludeNewChanges = vi.fn().mockResolvedValue({
       operationId: "a".repeat(128),
-      candidates: [first, second],
+      heads: [
+        {
+          workspace: workspaceCandidate(second),
+          candidates: [first, second],
+        },
+      ],
       includeThrough,
     });
     const ui = new FakeUi(undefined, ["Continue"], [second.changeId]);
@@ -191,6 +197,46 @@ describe("review command flows", () => {
     });
     expect(ui.information).toContain(
       "Included 2 new changes in the active review.",
+    );
+  });
+
+  it("chooses a compatible workspace before selecting changes to include", async () => {
+    const record = makeReviewRecord(fingerprint);
+    const service = fakeService(record);
+    const currentFix = selectionCandidate("l", "2", "Current fix");
+    const agentFix = selectionCandidate("m", "3", "Agent fix");
+    const includeThrough = vi
+      .fn()
+      .mockResolvedValue({ record, addedChangeCount: 1 });
+    service.beginIncludeNewChanges = vi.fn().mockResolvedValue({
+      operationId: "a".repeat(128),
+      heads: [
+        {
+          workspace: workspaceCandidate(currentFix),
+          candidates: [currentFix],
+        },
+        {
+          workspace: {
+            ...workspaceCandidate(agentFix),
+            name: "agent",
+            current: false,
+          },
+          candidates: [agentFix],
+        },
+      ],
+      includeThrough,
+    });
+    const ui = new FakeUi(
+      undefined,
+      [],
+      ["include-workspace:1", agentFix.changeId],
+    );
+
+    await controllerFor(service, ui, new FakeState()).includeNewChanges();
+
+    expect(includeThrough).toHaveBeenCalledWith(agentFix.changeId);
+    expect(ui.information).toContain(
+      "Included 1 new change in the active review.",
     );
   });
 
@@ -223,15 +269,26 @@ describe("review command flows", () => {
       actualChangeCount: 2,
       truncatedAtRoot: false,
     });
+
     service.beginStartReview = vi.fn().mockResolvedValue({
       operationId: preview.operationId,
+      listWorkspaces: vi.fn().mockResolvedValue([
+        workspaceCandidate(newest),
+      ]),
       listHistory: vi.fn().mockResolvedValue({
         commits: [oldest, newest],
         requestedCount: 50,
         hasMore: false,
         reachedRoot: true,
       }),
+      listHistoryFrom: vi.fn().mockResolvedValue({
+        commits: [oldest, newest],
+        requestedCount: 50,
+        hasMore: false,
+        reachedRoot: true,
+      }),
       selectLast: vi.fn(),
+      selectLastFrom: vi.fn(),
       selectRange,
       selectRevset: vi.fn(),
       start,
@@ -245,6 +302,50 @@ describe("review command flows", () => {
     await controllerFor(service, ui, new FakeState()).startReview();
 
     expect(selectRange).toHaveBeenCalledWith(oldest.changeId, newest.changeId);
+    expect(start).toHaveBeenCalledWith(preview, {
+      confirmLargeDiff: false,
+    });
+  });
+
+  it("starts Last X from a selected non-current workspace head", async () => {
+    const record = makeReviewRecord(fingerprint);
+    const service = fakeService(record);
+    service.getActiveReviewOrUndefined = vi.fn().mockResolvedValue(undefined);
+    const currentHead = selectionCandidate("k", "1", "Current");
+    const agentHead = selectionCandidate("l", "2", "Agent");
+    const preview = selectionPreview("last-x", [agentHead]);
+    const selectLastFrom = vi.fn().mockResolvedValue(preview);
+    const start = vi.fn().mockResolvedValue({
+      record,
+      actualChangeCount: 1,
+      truncatedAtRoot: false,
+    });
+    service.beginStartReview = vi.fn().mockResolvedValue({
+      ...fakeStartSession(preview, start),
+      listWorkspaces: vi.fn().mockResolvedValue([
+        workspaceCandidate(currentHead),
+        {
+          ...workspaceCandidate(agentHead),
+          name: "$(error)\nagent",
+          subject: "$(warning)\nAgent head",
+          current: false,
+        },
+      ]),
+      selectLastFrom,
+    } satisfies ReviewStartSession);
+    const ui = new FakeUi(
+      "1",
+      ["Workspace Stack (Last X)", "Start Review"],
+      ["workspace:1"],
+    );
+
+    await controllerFor(service, ui, new FakeState()).startReview();
+
+    expect(selectLastFrom).toHaveBeenCalledWith(agentHead.commitId, 1);
+    expect(ui.itemLists[0]?.[1]).toMatchObject({
+      label: "$(repo) $ (error) agent",
+      detail: "$ (warning) Agent head",
+    });
     expect(start).toHaveBeenCalledWith(preview, {
       confirmLargeDiff: false,
     });
@@ -296,6 +397,7 @@ class FakeUi implements CommandUi {
   public readonly information: string[] = [];
   public readonly warnings: string[] = [];
   public readonly errors: string[] = [];
+  public readonly itemLists: CommandQuickPickItem[][] = [];
 
   public constructor(
     private readonly input: string | undefined,
@@ -311,7 +413,10 @@ class FakeUi implements CommandUi {
     return Promise.resolve(this.picks.shift());
   }
 
-  public showItemQuickPick(): Promise<string | undefined> {
+  public showItemQuickPick(
+    items: readonly CommandQuickPickItem[],
+  ): Promise<string | undefined> {
+    this.itemLists.push([...items]);
     return Promise.resolve(this.itemPicks.shift());
   }
 
@@ -407,11 +512,31 @@ function fakeStartSession(
 } {
   return {
     operationId: preview.operationId,
+    listWorkspaces: vi.fn().mockResolvedValue([
+      workspaceCandidate(preview.commits.at(-1)),
+    ]),
     listHistory: vi.fn(),
+    listHistoryFrom: vi.fn(),
     selectLast: vi.fn().mockResolvedValue(preview),
+    selectLastFrom: vi.fn().mockResolvedValue(preview),
     selectRange: vi.fn().mockResolvedValue(preview),
     selectRevset: vi.fn().mockResolvedValue(preview),
     start,
+  };
+}
+
+function workspaceCandidate(
+  head: ReviewSelectionPreview["commits"][number] | undefined,
+) {
+  if (head === undefined) {
+    throw new Error("A workspace candidate requires a head.");
+  }
+  return {
+    name: "default",
+    changeId: head.changeId,
+    commitId: head.commitId,
+    subject: head.subject,
+    current: true,
   };
 }
 

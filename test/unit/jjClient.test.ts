@@ -119,6 +119,74 @@ describe("JjClient", () => {
     expect(executor.requests[1]?.args).toContain("never");
   });
 
+  it("lists recorded workspace heads with structured metadata", async () => {
+    const current = commit(1, ROOT_COMMIT_ID, {
+      currentWorkingCopy: true,
+    });
+    const agent = commit(2, ROOT_COMMIT_ID);
+    const { client, executor } = clientWithSession(
+      ok(
+        jsonLine({
+          name: "default",
+          changeId: current.changeId,
+          commitId: current.commitId,
+          subject: "current",
+          current: true,
+        }) +
+          jsonLine({
+            name: "agent",
+            changeId: agent.changeId,
+            commitId: agent.commitId,
+            subject: "agent",
+            current: false,
+          }),
+      ),
+    );
+
+    const workspaces = await (await client.openReadSession()).listWorkspaces();
+
+    expect(workspaces.map(({ name, current: isCurrent }) => [
+      name,
+      isCurrent,
+    ])).toEqual([
+      ["default", true],
+      ["agent", false],
+    ]);
+    expect(executor.requests[2]?.args).toContain("workspace");
+    expect(executor.requests[2]?.args).toContain(OPERATION_ID);
+  });
+
+  it("selects ancestors and history from a non-current workspace head", async () => {
+    const first = commit(1, ROOT_COMMIT_ID);
+    const agentHead = commit(2, first.commitId as string);
+    const { client, executor } = clientWithSession(
+      ok(jsonLine(first) + jsonLine(agentHead)),
+      ok(jsonLine(first) + jsonLine(agentHead)),
+    );
+    const session = await client.openReadSession();
+
+    const selection = await session.selectLastFrom(
+      agentHead.commitId as string,
+      2,
+    );
+    const history = await session.listHistoryFrom(
+      agentHead.commitId as string,
+      2,
+    );
+
+    expect(selection.changeIds).toEqual([first.changeId, agentHead.changeId]);
+    expect(history.commits.map(({ changeId }) => changeId)).toEqual([
+      first.changeId,
+      agentHead.changeId,
+    ]);
+    expect(executor.requests[2]?.args).toContain(
+      `ancestors(${String(agentHead.commitId)}, 2)`,
+    );
+    expect(executor.requests[3]?.args).toContain(
+      `ancestors(${String(agentHead.commitId)}, 3)`,
+    );
+  });
+
   it("rejects jj versions older than 0.44", async () => {
     const executor = new FakeExecutor(ok("jj 0.43.9\n"));
     const client = new JjClient("C:\\repo", { executor });

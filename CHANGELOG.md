@@ -4,6 +4,8 @@
 
 ### Added
 
+- Select any recorded jj workspace head when starting a Last X or historical
+  range review, and choose a compatible workspace when including new changes.
 - Comment on unchanged lines outside displayed hunks for text files already
   included in a review diff, with exact immutable full-file anchors across
   refreshes.

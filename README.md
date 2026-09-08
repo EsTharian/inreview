@@ -12,7 +12,7 @@ and resolve them after it updates the code.
 ## Features
 
 - Review a historical contiguous change range, a revset, or the latest `X`
-  changes ending at `@`.
+  changes ending at any recorded jj workspace head.
 - Switch between one combined stack diff and per-change diffs.
 - Use VS Code's native diff editor, syntax highlighting, themes, and Comments API.
 - Add comments to any line on the stored new side of a changed text file, or
@@ -77,39 +77,46 @@ was closed as a duplicate.
 1. Open one trusted jj repository in VS Code.
 2. Open the **InReview** Activity Bar view.
 3. Run **InReview: Start Review**.
-4. Choose **Choose Range**, **Current Stack (Last X)**, or
+4. Choose **Choose Range**, **Workspace Stack (Last X)**, or
    **Advanced: Enter jj Revset**.
-5. For a range, select the newest included change and then the oldest included
+5. For **Choose Range** or **Workspace Stack**, select a recorded workspace head
+   when the repository has more than one workspace.
+6. For a range, select the newest included change and then the oldest included
    change. Use **Load older changes** to extend the history window.
-6. Confirm the ordered selection preview.
-7. Select a file under **Active Review** to open its native diff.
-8. Use the comment gutter on either stored side of a changed text file, or use
+7. Confirm the ordered selection preview.
+8. Select a file under **Active Review** to open its native diff.
+9. Use the comment gutter on either stored side of a changed text file, or use
    **Add File Comment**.
-9. After a selected change is rewritten, run **InReview: Refresh Review**.
-10. After adding direct descendant changes to the stack, run
+10. After a selected change is rewritten, run **InReview: Refresh Review**.
+11. After adding direct descendant changes to a workspace stack, run
     **InReview: Include New Changes**.
 
 InReview stores immutable snapshots. A thread remains inline only when its complete target and context map exactly and uniquely to the refreshed diff. Otherwise, it becomes **Outdated** and stays available from the Comments view.
 
-**Last X** means `@` plus up to `X - 1` direct ancestors. The selection is a
-contiguous, single-parent stack. It stops before the jj root change, so a
-request can contain fewer than `X` changes. InReview rejects merges,
-divergent changes, and unresolved conflicts in the selected stack. Refresh
-follows the original stable change IDs after rewrites; it does not add a new
-child that later becomes `@`.
+**Last X** means the selected recorded workspace head plus up to `X - 1`
+direct ancestors. The selection is a contiguous, single-parent stack. It
+stops before the jj root change, so a request can contain fewer than `X`
+changes. InReview rejects merges, divergent changes, and unresolved conflicts
+in the selected stack. Refresh follows the original stable change IDs after
+rewrites; it does not follow later movement of the workspace head.
 
-**Include New Changes** lists the contiguous direct descendants between the
-current review head and `@`. Choose the newest change to include; all earlier
-descendants in that list are included, while later descendants remain outside
-the review. InReview rejects unrelated working copies, gaps, merges,
-divergence, conflicts, and reviews that already include `@`. Existing comments
-project to the new immutable snapshot with the same exact matching rules as
-refresh.
+**Include New Changes** lists recorded workspace heads that directly descend
+from the current review head. Select a workspace, then choose the newest change
+to include. All earlier descendants in that workspace chain are included,
+while later descendants remain outside the review. InReview rejects unrelated
+heads, gaps, merges, divergence, and conflicts. Existing comments project to
+the new immutable snapshot with the same exact matching rules as refresh.
 
-**Choose Range** browses up to 200 ancestors of `@` in pages of 50. The newest
-and oldest selected changes are both included. InReview rejects a range that
-crosses a merge, contains a divergent change or unresolved conflict, or does
-not form one contiguous parent chain.
+Another workspace contributes its last jj-recorded working-copy commit.
+Filesystem edits that jj has not yet snapshotted in that workspace are not
+visible to InReview. Selecting a workspace does not bind refresh to its name:
+the review stores full stable change IDs and remains valid if the workspace is
+renamed, forgotten, or moved.
+
+**Choose Range** browses up to 200 ancestors of the selected recorded
+workspace head in pages of 50. The newest and oldest selected changes are both
+included. InReview rejects a range that crosses a merge, contains a divergent
+change or unresolved conflict, or does not form one contiguous parent chain.
 
 **Advanced jj Revset** accepts any revset that resolves to 1–200 changes in one
 contiguous, single-parent chain. InReview previews the resolved changes and
@@ -177,9 +184,9 @@ Use the Command Palette or the matching view and comment actions.
 
 | Command | Purpose |
 | --- | --- |
-| **InReview: Start Review** | Select and capture a range, revset, or latest change stack. |
+| **InReview: Start Review** | Select a workspace head, range, revset, or latest change stack. |
 | **InReview: Refresh Review** | Capture rewritten versions of the same stable change IDs. |
-| **InReview: Include New Changes** | Choose a direct descendant endpoint to append to the active review. |
+| **InReview: Include New Changes** | Choose a compatible workspace head and descendant endpoint to append. |
 | **InReview: Archive Review** | Make the active review read-only and move it to history. |
 | **InReview: Restore Archived Review** | Restore an archived review as the active review. |
 | **InReview: Rename Review** | Change the active review title. |
@@ -210,7 +217,7 @@ requests. MCP traffic stays on a local per-user socket or named pipe.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `inreview.jj.path` | `jj` | Command name or absolute path for the jj executable. |
-| `inreview.review.defaultChangeCount` | `1` | Initial value for the **Current Stack (Last X)** prompt. |
+| `inreview.review.defaultChangeCount` | `1` | Initial value for the **Workspace Stack (Last X)** prompt. |
 | `inreview.review.largeDiffWarningLines` | `10000` | Changed-line count that requires confirmation. |
 | `inreview.mcp.enabled` | `true` | Register an eligible trusted workspace with the native MCP bridge. |
 | `inreview.logging.level` | `info` | Output-channel logging threshold. |

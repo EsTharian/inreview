@@ -8,6 +8,7 @@ import type {
   ReviewSelectionPreview,
   ReviewService,
   ReviewStartSession,
+  ReviewWorkspaceCandidate,
   StartReviewResult,
 } from "../review";
 import type { RevealFileRequest } from "./activeReviewTree";
@@ -123,7 +124,7 @@ export class ReviewCommandController {
       const method = await this.options.ui.showQuickPick(
         [
           "Choose Range",
-          "Current Stack (Last X)",
+          "Workspace Stack (Last X)",
           "Advanced: Enter jj Revset",
         ],
         {
@@ -135,13 +136,23 @@ export class ReviewCommandController {
         return;
       }
       const session = await service.beginStartReview();
+      const workspace =
+        method === "Advanced: Enter jj Revset"
+          ? undefined
+          : await this.chooseWorkspaceHead(session);
+      if (
+        method !== "Advanced: Enter jj Revset" &&
+        workspace === undefined
+      ) {
+        return;
+      }
       let result: StartReviewResult | undefined;
       while (result === undefined) {
         const preview =
           method === "Choose Range"
-            ? await this.chooseRangeSelection(session)
-            : method === "Current Stack (Last X)"
-              ? await this.chooseLastSelection(session)
+            ? await this.chooseRangeSelection(session, workspace)
+            : method === "Workspace Stack (Last X)"
+              ? await this.chooseLastSelection(session, workspace)
               : await this.chooseRevsetSelection(session);
         if (preview === undefined) {
           return;
@@ -209,17 +220,48 @@ export class ReviewCommandController {
     }
     try {
       const session = await service.beginIncludeNewChanges();
+      const heads = [...session.heads].sort(
+        (left, right) =>
+          Number(right.workspace.current) - Number(left.workspace.current) ||
+          left.workspace.name.localeCompare(right.workspace.name),
+      );
+      let selectedHead = heads[0];
+      if (heads.length > 1) {
+        const workspacePick = await this.options.ui.showItemQuickPick(
+          heads.map(({ workspace, candidates }, index) => ({
+            id: `include-workspace:${String(index)}`,
+            label: workspace.current
+              ? `$(home) ${safeQuickPickText(workspace.name)} (current)`
+              : `$(repo) ${safeQuickPickText(workspace.name)}`,
+            description: workspace.changeId.slice(0, 12),
+            detail: `${String(candidates.length)} new ${candidates.length === 1 ? "change" : "changes"} — ${safeQuickPickText(workspace.subject)}`,
+          })),
+          {
+            title: "Include New Changes",
+            placeHolder:
+              "Choose a recorded workspace head that extends this review.",
+          },
+        );
+        if (workspacePick === undefined) {
+          return;
+        }
+        selectedHead =
+          heads[Number(workspacePick.slice("include-workspace:".length))];
+      }
+      if (selectedHead === undefined) {
+        return;
+      }
       const picked = await this.options.ui.showItemQuickPick(
-        session.candidates.map((candidate, index) => ({
+        selectedHead.candidates.map((candidate, index) => ({
           id: candidate.changeId,
-          label: candidate.currentWorkingCopy
+          label: index === selectedHead.candidates.length - 1
             ? `$(circle-filled) ${candidateLabel(candidate)}`
             : candidateLabel(candidate),
           description: candidate.changeId.slice(0, 12),
           detail: `Include ${String(index + 1)} new ${index === 0 ? "change" : "changes"}${candidate.currentWorkingCopy ? " through @." : "."}`,
         })),
         {
-          title: "Include New Changes",
+          title: `Include New Changes from ${safeQuickPickText(selectedHead.workspace.name)}`,
           placeHolder: "Choose the newest change to include. Earlier descendants are included too.",
         },
       );
@@ -408,14 +450,18 @@ export class ReviewCommandController {
 
   private async chooseLastSelection(
     session: ReviewStartSession,
+    workspace: ReviewWorkspaceCandidate | undefined,
   ): Promise<ReviewSelectionPreview | undefined> {
+    if (workspace === undefined) {
+      return undefined;
+    }
     const remembered = this.options.workspaceState.get(
       LAST_CHANGE_COUNT_KEY,
       this.options.defaultChangeCount,
     );
     const input = await this.options.ui.showInputBox({
-      title: "Current Stack",
-      prompt: "Review the last X jj changes ending at @.",
+      title: "Workspace Stack",
+      prompt: `Review the last X jj changes ending at workspace "${safeQuickPickText(workspace.name)}".`,
       value: String(remembered),
       validateInput: validatePositiveInteger,
     });
@@ -429,16 +475,23 @@ export class ReviewCommandController {
     }
     const count = Number(input.trim());
     await this.options.workspaceState.update(LAST_CHANGE_COUNT_KEY, count);
-    return session.selectLast(count);
+    return session.selectLastFrom(workspace.commitId, count);
   }
 
   private async chooseRangeSelection(
     session: ReviewStartSession,
+    workspace: ReviewWorkspaceCandidate | undefined,
   ): Promise<ReviewSelectionPreview | undefined> {
+    if (workspace === undefined) {
+      return undefined;
+    }
     let historyCount = INITIAL_HISTORY_COUNT;
     let newestChangeId: string | undefined;
     for (;;) {
-      const history = await session.listHistory(historyCount);
+      const history = await session.listHistoryFrom(
+        workspace.commitId,
+        historyCount,
+      );
       const selectable = history.commits.filter(isSelectableCandidate);
       if (selectable.length === 0) {
         await this.options.ui.showInformationMessage(
@@ -446,6 +499,7 @@ export class ReviewCommandController {
         );
         return undefined;
       }
+
       if (newestChangeId === undefined) {
         const items = selectable
           .slice()
@@ -510,6 +564,37 @@ export class ReviewCommandController {
     }
   }
 
+  private async chooseWorkspaceHead(
+    session: ReviewStartSession,
+  ): Promise<ReviewWorkspaceCandidate | undefined> {
+    const workspaces = [...(await session.listWorkspaces())].sort(
+      (left, right) =>
+        Number(right.current) - Number(left.current) ||
+        left.name.localeCompare(right.name),
+    );
+    if (workspaces.length === 1) {
+      return workspaces[0];
+    }
+    const items = workspaces.map((workspace, index) => ({
+      id: `workspace:${String(index)}`,
+      label: workspace.current
+        ? `$(home) ${safeQuickPickText(workspace.name)} (current)`
+        : `$(repo) ${safeQuickPickText(workspace.name)}`,
+      description: workspace.changeId.slice(0, 12),
+      detail: safeQuickPickText(workspace.subject) || "(no description)",
+    }));
+    const picked = await this.options.ui.showItemQuickPick(items, {
+      title: "Select Workspace Head",
+      placeHolder:
+        "Choose the recorded jj workspace head used to browse this review.",
+    });
+    if (picked === undefined) {
+      return undefined;
+    }
+    const index = Number(picked.slice("workspace:".length));
+    return Number.isSafeInteger(index) ? workspaces[index] : undefined;
+  }
+
   private async chooseRevsetSelection(
     session: ReviewStartSession,
   ): Promise<ReviewSelectionPreview | undefined> {
@@ -549,7 +634,7 @@ export class ReviewCommandController {
       .slice(0, 5)
       .map(
         (commit) =>
-          `${commit.changeId.slice(0, 8)} ${commit.subject.trim() || "(no description)"}`,
+          `${commit.changeId.slice(0, 8)} ${safeQuickPickText(commit.subject) || "(no description)"}`,
       )
       .join(" -> ") +
       (preview.commits.length > 5
@@ -668,7 +753,20 @@ function isSelectableCandidate(
 }
 
 function candidateLabel(candidate: ReviewSelectionCandidate): string {
-  return candidate.subject.trim() || "(no description)";
+  return safeQuickPickText(candidate.subject) || "(no description)";
+}
+
+function safeQuickPickText(value: string): string {
+  let sanitized = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    sanitized +=
+      codeUnit <= 31 || codeUnit === 127 ? " " : value.charAt(index);
+  }
+  return sanitized
+    .replace(/\$\(/gu, "$ (")
+    .trim()
+    .slice(0, 256);
 }
 
 function candidateItem(

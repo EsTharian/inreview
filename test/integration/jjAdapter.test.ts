@@ -8,6 +8,7 @@ import { JjClient, JjExecutableNotFoundError } from "../../src/jj";
 
 const WORK_ROOT = path.resolve("test", ".jj-adapter-work");
 const REPOSITORY = path.join(WORK_ROOT, "repo");
+const AGENT_WORKSPACE = path.join(WORK_ROOT, "agent");
 const USER_CONFIG = [
   "--config",
   "user.name=InReview Test",
@@ -27,6 +28,20 @@ function runJj(args: readonly string[]): void {
     encoding: "utf8",
     shell: false,
   });
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout);
+  }
+}
+
+function runJjAt(repository: string, args: readonly string[]): void {
+  const result = spawnSync(
+    "jj",
+    [...USER_CONFIG, "--repository", repository, ...args],
+    {
+      encoding: "utf8",
+      shell: false,
+    },
+  );
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout);
   }
@@ -55,6 +70,8 @@ describe.skipIf(!jjAvailable())("jj adapter integration", () => {
       Buffer.from([0, 1, 2, 3, 255]),
     );
     runJj(["describe", "--message", "newest"]);
+    runJj(["workspace", "add", "--name", "agent", AGENT_WORKSPACE]);
+    runJjAt(AGENT_WORKSPACE, ["describe", "--message", "agent workspace head"]);
   });
 
   afterAll(async () => {
@@ -102,6 +119,26 @@ describe.skipIf(!jjAvailable())("jj adapter integration", () => {
       false,
     );
     expect(revset.changeIds).toEqual(range.changeIds);
+  });
+
+  it("lists and selects a different recorded workspace head", async () => {
+    const session = await new JjClient(REPOSITORY).openReadSession();
+    const workspaces = await session.listWorkspaces();
+    const agent = workspaces.find(({ name }) => name === "agent");
+    expect(agent).toBeDefined();
+
+    const selection = await session.selectLastFrom(
+      agent?.commitId ?? "",
+      1,
+    );
+    const history = await session.listHistoryFrom(
+      agent?.commitId ?? "",
+      2,
+    );
+
+    expect(selection.commits[0]?.subject).toBe("agent workspace head");
+    expect(history.commits.at(-1)?.changeId).toBe(agent?.changeId);
+    expect(agent?.current).toBe(false);
   });
 
   it("reads operation data, Git diffs, metadata, and exact binary bytes", async () => {

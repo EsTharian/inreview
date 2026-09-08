@@ -3,6 +3,13 @@ import path from "node:path";
 
 import { parseReviewRecord, type ReviewRecord } from "../domain/comments";
 import { StorageError } from "../domain/errors";
+import {
+  JjAmbiguousChangeError,
+  JjConflictError,
+  JjMergeError,
+  JjNoNewChangesError,
+  JjSelectionError,
+} from "../jj/errors";
 import { JjClient, type JjClientOptions } from "../jj/jjClient";
 import { shouldWarnForChangedLines } from "../jj/snapshotBuilder";
 import type { JjCommit, ReviewSelection } from "../jj/types";
@@ -71,6 +78,14 @@ export interface ReviewHistory {
   readonly reachedRoot: boolean;
 }
 
+export interface ReviewWorkspaceCandidate {
+  readonly name: string;
+  readonly changeId: string;
+  readonly commitId: string;
+  readonly subject: string;
+  readonly current: boolean;
+}
+
 export interface ReviewSelectionPreview {
   readonly mode: ReviewSelectionMode;
   readonly operationId: string;
@@ -88,8 +103,19 @@ export interface StartSelectedReviewOptions {
 
 export interface ReviewStartSession {
   readonly operationId: string;
+  listWorkspaces(signal?: AbortSignal): Promise<readonly ReviewWorkspaceCandidate[]>;
   listHistory(count: number, signal?: AbortSignal): Promise<ReviewHistory>;
+  listHistoryFrom(
+    headCommitId: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewHistory>;
   selectLast(
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewSelectionPreview>;
+  selectLastFrom(
+    headCommitId: string,
     count: number,
     signal?: AbortSignal,
   ): Promise<ReviewSelectionPreview>;
@@ -110,7 +136,10 @@ export interface ReviewStartSession {
 
 export interface IncludeNewChangesSession {
   readonly operationId: string;
-  readonly candidates: readonly ReviewSelectionCandidate[];
+  readonly heads: readonly {
+    readonly workspace: ReviewWorkspaceCandidate;
+    readonly candidates: readonly ReviewSelectionCandidate[];
+  }[];
   includeThrough(
     newestChangeId: string,
     options?: Pick<RefreshReviewOptions, "confirmLargeDiff" | "signal">,
@@ -333,6 +362,10 @@ export class ReviewService {
     };
     return {
       operationId: readSession.operationId,
+      listWorkspaces: async (listSignal) =>
+        (await readSession.listWorkspaces(listSignal)).map((workspace) => ({
+          ...workspace,
+        })),
       listHistory: async (count, listSignal) => {
         const page = await readSession.listHistory(count, listSignal);
         return {
@@ -342,8 +375,30 @@ export class ReviewService {
           reachedRoot: page.reachedRoot,
         };
       },
+      listHistoryFrom: async (headCommitId, count, listSignal) => {
+        const page = await readSession.listHistoryFrom(
+          headCommitId,
+          count,
+          listSignal,
+        );
+        return {
+          commits: page.commits.map(toSelectionCandidate),
+          requestedCount: page.requestedCount,
+          hasMore: page.hasMore,
+          reachedRoot: page.reachedRoot,
+        };
+      },
       selectLast: async (count, selectSignal) =>
         toPreview("last-x", await readSession.selectLast(count, selectSignal)),
+      selectLastFrom: async (headCommitId, count, selectSignal) =>
+        toPreview(
+          "last-x",
+          await readSession.selectLastFrom(
+            headCommitId,
+            count,
+            selectSignal,
+          ),
+        ),
       selectRange: async (oldestChangeId, newestChangeId, selectSignal) =>
         toPreview(
           "range",
@@ -442,17 +497,44 @@ export class ReviewService {
   ): Promise<IncludeNewChangesSession> {
     const active = await this.requireActive();
     const readSession = await this.#repository.openReadSession(signal);
-    const completeSelection = await readSession.extendSelection(
-      active.review.orderedChangeIds,
-      undefined,
-      signal,
-    );
-    const candidates = completeSelection.commits
-      .slice(active.review.orderedChangeIds.length)
-      .map(toSelectionCandidate);
+    await readSession.resolveSelection(active.review.orderedChangeIds, signal);
+    const workspaces = await readSession.listWorkspaces(signal);
+    const heads: IncludeNewChangesSession["heads"][number][] = [];
+    for (const workspace of workspaces) {
+      try {
+        const selection = await readSession.extendSelection(
+          active.review.orderedChangeIds,
+          workspace.changeId,
+          signal,
+        );
+        heads.push({
+          workspace: { ...workspace },
+          candidates: selection.commits
+            .slice(active.review.orderedChangeIds.length)
+            .map(toSelectionCandidate),
+        });
+      } catch (error) {
+        if (
+          error instanceof JjNoNewChangesError ||
+          error instanceof JjSelectionError ||
+          error instanceof JjMergeError ||
+          error instanceof JjConflictError ||
+          error instanceof JjAmbiguousChangeError
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (heads.length === 0) {
+      throw new JjNoNewChangesError(
+        "No recorded workspace head directly extends the active review.",
+      );
+    }
+    const candidates = heads.flatMap(({ candidates: values }) => values);
     return {
       operationId: readSession.operationId,
-      candidates,
+      heads,
       includeThrough: async (newestChangeId, options = {}) => {
         if (!candidates.some(({ changeId }) => changeId === newestChangeId)) {
           throw new StaleReviewError(

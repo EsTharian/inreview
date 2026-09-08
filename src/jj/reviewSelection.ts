@@ -12,6 +12,7 @@ export function buildLastSelection(
   operationId: string,
   requestedCount: number,
   records: readonly JjCommit[],
+  expectedHeadCommitId?: string,
 ): ReviewSelection {
   if (!Number.isSafeInteger(requestedCount) || requestedCount < 1) {
     throw new JjSelectionError("The requested change count must be positive.");
@@ -30,12 +31,14 @@ export function buildLastSelection(
       "jj returned more ancestors than the requested depth.",
     );
   }
-  if (
-    nonRoot.filter((record) => record.currentWorkingCopy).length !== 1 ||
-    nonRoot.at(-1)?.currentWorkingCopy !== true
-  ) {
+  const headMatches =
+    expectedHeadCommitId === undefined
+      ? nonRoot.filter((record) => record.currentWorkingCopy).length === 1 &&
+        nonRoot.at(-1)?.currentWorkingCopy === true
+      : nonRoot.at(-1)?.commitId === expectedHeadCommitId;
+  if (!headMatches) {
     throw new JjSelectionError(
-      "The selected stack does not end at the current working copy.",
+      "The selected stack does not end at the requested workspace head.",
     );
   }
 

@@ -126,8 +126,10 @@ export class JjSelectionError extends JjError {
 }
 
 export class JjNoNewChangesError extends JjSelectionError {
-  public constructor() {
-    super("The current working copy has no new descendant changes to include.");
+  public constructor(
+    message = "The current working copy has no new descendant changes to include.",
+  ) {
+    super(message);
   }
 }
 

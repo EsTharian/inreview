@@ -6,14 +6,29 @@ import type {
   SnapshotPreflight,
   SnapshotReadSession,
 } from "../jj/snapshotBuilder";
-import type { ReviewHistoryPage, ReviewSelection } from "../jj/types";
+import type {
+  JjWorkspace,
+  ReviewHistoryPage,
+  ReviewSelection,
+} from "../jj/types";
 
 export interface ReviewReadSession extends SnapshotReadSession {
   listHistory(
     count: number,
     signal?: AbortSignal,
   ): Promise<ReviewHistoryPage>;
+  listHistoryFrom(
+    headCommitId: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewHistoryPage>;
+  listWorkspaces(signal?: AbortSignal): Promise<readonly JjWorkspace[]>;
   selectLast(count: number, signal?: AbortSignal): Promise<ReviewSelection>;
+  selectLastFrom(
+    headCommitId: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewSelection>;
   selectRange(
     oldestChangeId: string,
     newestChangeId: string,

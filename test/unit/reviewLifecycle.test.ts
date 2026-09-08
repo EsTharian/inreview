@@ -5,7 +5,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { ReviewRecord } from "../../src/domain/comments";
-import { JjStaleSelectionError } from "../../src/jj/errors";
+import {
+  JjSelectionError,
+  JjStaleSelectionError,
+} from "../../src/jj/errors";
 import { parseGitPatch } from "../../src/diff";
 import type {
   JjChangedFile,
@@ -13,6 +16,7 @@ import type {
   JjFile,
   JjFileProbe,
   JjOperation,
+  JjWorkspace,
   ReviewHistoryPage,
   ReviewSelection,
 } from "../../src/jj/types";
@@ -46,6 +50,7 @@ interface Version {
   readonly contents: ReadonlyMap<string, Buffer>;
   readonly operation: JjOperation;
   readonly resolveError?: Error;
+  readonly workspaces?: readonly JjWorkspace[];
 }
 
 class FakeSession implements ReviewReadSession {
@@ -67,6 +72,32 @@ class FakeSession implements ReviewReadSession {
     });
   }
 
+  public selectLastFrom(
+    _headCommitId: string,
+    count: number,
+  ): Promise<ReviewSelection> {
+    return this.selectLast(count);
+  }
+
+  public listWorkspaces(): Promise<readonly JjWorkspace[]> {
+    if (this.version.workspaces !== undefined) {
+      return Promise.resolve(this.version.workspaces);
+    }
+    const head = this.version.selection.commits.at(-1);
+    if (head === undefined) {
+      return Promise.resolve([]);
+    }
+    return Promise.resolve([
+      {
+        name: "default",
+        changeId: head.changeId,
+        commitId: head.commitId,
+        subject: head.subject,
+        current: true,
+      },
+    ]);
+  }
+
   public listHistory(count: number): Promise<ReviewHistoryPage> {
     return Promise.resolve({
       commits: this.version.selection.commits.slice(-count),
@@ -74,6 +105,13 @@ class FakeSession implements ReviewReadSession {
       hasMore: this.version.selection.commits.length > count,
       reachedRoot: this.version.selection.truncatedAtRoot,
     });
+  }
+
+  public listHistoryFrom(
+    _headCommitId: string,
+    count: number,
+  ): Promise<ReviewHistoryPage> {
+    return this.listHistory(count);
   }
 
   public selectRange(): Promise<ReviewSelection> {
@@ -90,8 +128,21 @@ class FakeSession implements ReviewReadSession {
     if (this.version.resolveError !== undefined) {
       return Promise.reject(this.version.resolveError);
     }
-    expect(storedChangeIds).toEqual(this.version.selection.changeIds);
-    return Promise.resolve(this.version.selection);
+    if (
+      storedChangeIds.some(
+        (changeId, index) => this.version.selection.changeIds[index] !== changeId,
+      )
+    ) {
+      return Promise.reject(
+        new JjStaleSelectionError("The selected changes are stale."),
+      );
+    }
+    return Promise.resolve({
+      ...selectionFrom(
+        this.version.selection.commits.slice(0, storedChangeIds.length),
+      ),
+      operationId: this.operationId,
+    });
   }
 
   public extendSelection(
@@ -114,6 +165,13 @@ class FakeSession implements ReviewReadSession {
     }
     const newestIndex =
       this.version.selection.changeIds.indexOf(newestChangeId);
+    if (newestIndex < 0) {
+      return Promise.reject(
+        new JjSelectionError(
+          "The selected workspace does not extend the review.",
+        ),
+      );
+    }
     if (newestIndex < storedChangeIds.length) {
       return Promise.reject(
         new JjStaleSelectionError("The selected endpoint is invalid."),
@@ -537,7 +595,7 @@ describe("review lifecycle", () => {
       await harness.service.startReview({ requestedChangeCount: 1 });
       const session = await harness.service.beginIncludeNewChanges();
 
-      expect(session.candidates.map(({ changeId }) => changeId)).toEqual([
+      expect(session.heads[0]?.candidates.map(({ changeId }) => changeId)).toEqual([
         "change-b",
         "change-c",
       ]);
@@ -548,6 +606,46 @@ describe("review lifecycle", () => {
         "change-a",
         "change-b",
       ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("offers only workspace heads that directly extend the active review", async () => {
+    const initial = version(["change-a"], ["commit-a"], "Initial");
+    const descendants = version(
+      ["change-a", "change-b", "change-c"],
+      ["commit-a", "commit-b", "commit-c"],
+      "Agent head",
+      {
+        workspaces: [
+          {
+            name: "default",
+            changeId: "unrelated-change",
+            commitId: "unrelated-commit",
+            subject: "Unrelated",
+            current: true,
+          },
+          {
+            name: "agent",
+            changeId: "change-c",
+            commitId: "commit-c",
+            subject: "Agent head",
+            current: false,
+          },
+        ],
+      },
+    );
+    const harness = await createHarness([initial, descendants]);
+    try {
+      await harness.service.startReview({ requestedChangeCount: 1 });
+      const session = await harness.service.beginIncludeNewChanges();
+
+      expect(session.heads).toHaveLength(1);
+      expect(session.heads[0]?.workspace.name).toBe("agent");
+      expect(
+        session.heads[0]?.candidates.map(({ changeId }) => changeId),
+      ).toEqual(["change-b", "change-c"]);
     } finally {
       await harness.close();
     }
@@ -728,6 +826,7 @@ function version(
     readonly oldText?: string;
     readonly newText?: string;
     readonly resolveError?: Error;
+    readonly workspaces?: readonly JjWorkspace[];
   } = {},
 ): Version {
   const oldText = options.oldText ?? "old";
@@ -767,6 +866,9 @@ function version(
     ...(options.resolveError === undefined
       ? {}
       : { resolveError: options.resolveError }),
+    ...(options.workspaces === undefined
+      ? {}
+      : { workspaces: options.workspaces }),
   };
 }
 

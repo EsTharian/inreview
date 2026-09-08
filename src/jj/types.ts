@@ -23,6 +23,14 @@ export interface JjOperation {
   readonly root: boolean;
 }
 
+export interface JjWorkspace {
+  readonly name: string;
+  readonly changeId: string;
+  readonly commitId: string;
+  readonly subject: string;
+  readonly current: boolean;
+}
+
 export interface JjCommit {
   readonly changeId: string;
   readonly normalChangeId: string;

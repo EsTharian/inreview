@@ -22,6 +22,15 @@ export const OPERATION_JSON_TEMPLATE =
   ' ++ ",\\"root\\":" ++ root' +
   ' ++ "}\\n"';
 
+export const WORKSPACE_JSON_TEMPLATE =
+  '"{"' +
+  ' ++ "\\"name\\":" ++ json(name)' +
+  ' ++ ",\\"changeId\\":" ++ json(target.change_id())' +
+  ' ++ ",\\"commitId\\":" ++ json(target.commit_id())' +
+  ' ++ ",\\"subject\\":" ++ target.description().first_line().escape_json()' +
+  ' ++ ",\\"current\\":" ++ target.current_working_copy()' +
+  ' ++ "}\\n"';
+
 export const FILE_JSON_TEMPLATE =
   '"{"' +
   ' ++ "\\"path\\":" ++ json(path)' +

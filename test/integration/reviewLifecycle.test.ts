@@ -10,6 +10,7 @@ const workRoot = path.resolve("test", ".review-lifecycle-work");
 const repositoryRoot = path.join(workRoot, "repo");
 const storageRoot = path.join(workRoot, "storage");
 const nestedPath = path.join(repositoryRoot, "nested");
+const agentWorkspaceRoot = path.join(workRoot, "agent-workspace");
 const userConfig = [
   "--config",
   "user.name=InReview Lifecycle Test",
@@ -30,6 +31,21 @@ function runJj(args: readonly string[]): void {
     [...userConfig, "--repository", repositoryRoot, ...args],
     {
       cwd: repositoryRoot,
+      encoding: "utf8",
+      shell: false,
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout);
+  }
+}
+
+function runJjAt(repository: string, args: readonly string[]): void {
+  const result = spawnSync(
+    "jj",
+    [...userConfig, "--repository", repository, ...args],
+    {
+      cwd: repository,
       encoding: "utf8",
       shell: false,
     },
@@ -126,6 +142,48 @@ describe.skipIf(!jjAvailable())("review lifecycle integration", () => {
       expect(extended.record.snapshots.at(-1)?.changes.at(-1)?.subject).toBe(
         "Agent feedback fix",
       );
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("starts a review from another recorded workspace head", async () => {
+    runJj([
+      "workspace",
+      "add",
+      "--name",
+      "review-agent",
+      agentWorkspaceRoot,
+    ]);
+    runJjAt(agentWorkspaceRoot, [
+      "describe",
+      "--message",
+      "Other workspace head",
+    ]);
+    const service = await ReviewService.create({
+      repositoryPath: nestedPath,
+      environment: "integration-workspace-head-test",
+      storageRoot,
+      clock: () => new Date("2026-08-25T20:00:00.000Z"),
+    });
+    try {
+      const session = await service.beginStartReview();
+      const workspace = (await session.listWorkspaces()).find(
+        ({ name }) => name === "review-agent",
+      );
+      expect(workspace).toBeDefined();
+      const preview = await session.selectLastFrom(
+        workspace?.commitId ?? "",
+        1,
+      );
+      const started = await session.start(preview);
+
+      expect(started.record.snapshots[0]?.changes[0]?.subject).toBe(
+        "Other workspace head",
+      );
+      expect(started.record.review.orderedChangeIds).toEqual([
+        workspace?.changeId,
+      ]);
     } finally {
       await service.close();
     }

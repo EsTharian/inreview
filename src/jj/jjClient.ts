@@ -14,6 +14,7 @@ import {
   DIFF_FILE_JSON_TEMPLATE,
   FILE_JSON_TEMPLATE,
   OPERATION_JSON_TEMPLATE,
+  WORKSPACE_JSON_TEMPLATE,
 } from "./jjTemplates";
 import {
   NodeProcessExecutor,
@@ -35,6 +36,7 @@ import type {
   JjFileProbe,
   JjOperation,
   JjVersion,
+  JjWorkspace,
   ReviewHistoryPage,
   ReviewSelection,
 } from "./types";
@@ -350,6 +352,52 @@ export class JjReadSession {
     return buildLastSelection(this.operationId, count, records);
   }
 
+  public async listWorkspaces(
+    signal?: AbortSignal,
+  ): Promise<readonly JjWorkspace[]> {
+    const output = await this.client.runRead(
+      this.operationId,
+      ["workspace", "list", "-T", WORKSPACE_JSON_TEMPLATE],
+      signal,
+    );
+    const workspaces = parseJsonLines(output, isWorkspace, "workspace");
+    if (workspaces.length === 0) {
+      throw new JjInvalidOutputError("jj did not return any workspaces.");
+    }
+    if (
+      new Set(workspaces.map(({ name }) => name)).size !== workspaces.length ||
+      workspaces.filter(({ current }) => current).length !== 1
+    ) {
+      throw new JjInvalidOutputError(
+        "jj returned duplicate workspaces or an invalid current workspace.",
+      );
+    }
+    return workspaces;
+  }
+
+  public async selectLastFrom(
+    headCommitId: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewSelection> {
+    assertCommitId(headCommitId);
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new JjSelectionError(
+        "The requested change count must be a positive integer.",
+      );
+    }
+    const records = await this.readCommitRevset(
+      `ancestors(${headCommitId}, ${String(count)})`,
+      signal,
+    );
+    return buildLastSelection(
+      this.operationId,
+      count,
+      records,
+      headCommitId,
+    );
+  }
+
   public async listHistory(
     count: number,
     signal?: AbortSignal,
@@ -363,13 +411,42 @@ export class JjReadSession {
       `ancestors(@, ${String(count + 1)})`,
       signal,
     );
-    const currentRecords = records.filter(
-      (record) => record.currentWorkingCopy,
-    );
-    const current = currentRecords[0];
-    if (currentRecords.length !== 1 || current === undefined) {
+    const current = records.find((record) => record.currentWorkingCopy);
+    if (current === undefined) {
       throw new JjSelectionError(
-        "jj did not return one current working-copy change.",
+        "jj did not return the current working-copy change.",
+      );
+    }
+    return this.buildHistoryPage(count, current.commitId, records);
+  }
+
+  public async listHistoryFrom(
+    headCommitId: string,
+    count: number,
+    signal?: AbortSignal,
+  ): Promise<ReviewHistoryPage> {
+    assertCommitId(headCommitId);
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new JjSelectionError(
+        "The history count must be a positive integer.",
+      );
+    }
+    const records = await this.readCommitRevset(
+      `ancestors(${headCommitId}, ${String(count + 1)})`,
+      signal,
+    );
+    return this.buildHistoryPage(count, headCommitId, records);
+  }
+
+  private buildHistoryPage(
+    count: number,
+    headCommitId: string,
+    records: readonly JjCommit[],
+  ): ReviewHistoryPage {
+    const current = records.find(({ commitId }) => commitId === headCommitId);
+    if (current === undefined) {
+      throw new JjSelectionError(
+        "jj did not return the requested workspace head.",
       );
     }
     const byCommitId = new Map(
@@ -859,6 +936,22 @@ function isCommit(value: unknown): value is JjCommit {
     typeof value.divergent === "boolean" &&
     typeof value.root === "boolean" &&
     typeof value.currentWorkingCopy === "boolean"
+  );
+}
+
+function isWorkspace(value: unknown): value is JjWorkspace {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    value.name.length > 0 &&
+    value.name.length <= 4096 &&
+    typeof value.changeId === "string" &&
+    CHANGE_ID_PATTERN.test(value.changeId) &&
+    typeof value.commitId === "string" &&
+    COMMIT_ID_PATTERN.test(value.commitId) &&
+    typeof value.subject === "string" &&
+    value.subject.length <= 65_536 &&
+    typeof value.current === "boolean"
   );
 }
 
