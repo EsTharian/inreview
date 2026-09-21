@@ -106,7 +106,7 @@ export class RepositoryLock {
     options: RepositoryLockOptions = {},
   ): Promise<RepositoryLock> {
     validateDurations(options);
-    await mkdir(repositoryStorageDirectory, { recursive: true });
+    await mkdir(repositoryStorageDirectory, { recursive: true, mode: 0o700 });
     const lockPath = path.join(repositoryStorageDirectory, "writer.lock");
     const currentHostname = options.hostname ?? hostname();
     const currentPid = options.pid ?? process.pid;

@@ -26,7 +26,7 @@ export class BlobStore {
   }
 
   public async initialize(): Promise<void> {
-    await mkdir(this.#directory, { recursive: true });
+    await mkdir(this.#directory, { recursive: true, mode: 0o700 });
     await cleanupTemporaryFiles(this.#directory);
   }
 

@@ -31,7 +31,7 @@ export async function atomicWriteFile(
   faultPoint: StorageFaultPoint,
   faultInjector?: StorageFaultInjector,
 ): Promise<void> {
-  await mkdir(path.dirname(destination), { recursive: true });
+  await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
   const temporaryPath = path.join(path.dirname(destination), `.inreview-tmp-${randomUUID()}`);
   let handle;
   let destinationReplaced = false;
