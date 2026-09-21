@@ -424,7 +424,14 @@ async function initializeWorkspace(
     repositoryPath: canonicalRoot,
     environment: environmentKey,
     storageRoot: context.globalStorageUri,
-    jj: { executable: settings.jjPath },
+    jj: {
+      executable: settings.jjPath,
+      ignoreWorkingCopy: settings.ignoreWorkingCopy,
+      // a multi-gigabyte text file in one change must not buffer the extension
+      // host to death (no swap on the laptop): the capture stops at 256 MiB and
+      // the review fails with jj's output-limit error instead
+      captureStdoutLimitBytes: 256 * 1024 * 1024,
+    },
     warningLineCount: settings.largeDiffWarningLines,
   });
   return {

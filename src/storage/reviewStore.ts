@@ -132,7 +132,7 @@ export class ReviewStore {
     const fingerprint = repositoryFingerprint(options);
     const directory = path.join(storagePath(options.storageRoot), fingerprint);
     const manifestsDirectory = path.join(directory, "reviews");
-    await mkdir(manifestsDirectory, { recursive: true });
+    await mkdir(manifestsDirectory, { recursive: true, mode: 0o700 });
     const lock = await RepositoryLock.acquire(directory, options.lockOptions);
 
     try {
@@ -543,7 +543,7 @@ export class ReviewStore {
             this.#manifestsDirectory,
             "quarantine",
           );
-          await mkdir(quarantineDirectory, { recursive: true });
+          await mkdir(quarantineDirectory, { recursive: true, mode: 0o700 });
           quarantinedPath = path.join(
             quarantineDirectory,
             `${entry.manifestFile}.corrupt-${randomUUID()}`,

@@ -61,6 +61,14 @@ export interface JjClientOptions {
   readonly stderrLimitBytes?: number;
   readonly captureTimeoutMs?: number;
   readonly captureStdoutLimitBytes?: number | null;
+  /**
+   * Open the read session at the repository's last operation without
+   * snapshotting the working copy. Every later read is pinned with
+   * `--at-operation` (which never snapshots), so this is the only call that
+   * would fold untracked files into `@`. Off by default (upstream behaviour);
+   * the extension passes the `inreview.jj.ignoreWorkingCopy` setting.
+   */
+  readonly ignoreWorkingCopy?: boolean;
 }
 
 interface RunOptions {
@@ -83,6 +91,7 @@ export class JjClient {
   private readonly stderrLimitBytes: number;
   private readonly captureTimeoutMs: number;
   private readonly captureStdoutLimitBytes: number | null;
+  private readonly ignoreWorkingCopy: boolean;
   private capabilities: JjCapabilities | undefined;
 
   public constructor(repository: string, options: JjClientOptions = {}) {
@@ -123,6 +132,7 @@ export class JjClient {
       null,
       "captureStdoutLimitBytes",
     );
+    this.ignoreWorkingCopy = options.ignoreWorkingCopy === true;
   }
 
   public async checkCapabilities(
@@ -158,7 +168,10 @@ export class JjClient {
     let output: Buffer;
     try {
       output = await this.execute(
-        ["op", "log", "--no-graph", "--limit", "1", "-T", OPERATION_JSON_TEMPLATE],
+        [
+          ...(this.ignoreWorkingCopy ? ["--ignore-working-copy"] : []),
+          "op", "log", "--no-graph", "--limit", "1", "-T", OPERATION_JSON_TEMPLATE,
+        ],
         signal === undefined ? {} : { signal },
       );
     } catch (error) {

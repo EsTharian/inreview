@@ -101,6 +101,22 @@ function clientWithSession(
 }
 
 describe("JjClient", () => {
+  it("opens the read session without a snapshot when ignoreWorkingCopy is set", async () => {
+    const first = commit(1, ROOT_COMMIT_ID, { currentWorkingCopy: true });
+    const executor = new FakeExecutor(ok("jj 0.44.0-af45d57\n"), ok(jsonLine(OPERATION)), ok(jsonLine(first)));
+    const client = new JjClient("C:\\repo with spaces", {
+      executable: "configured-jj",
+      executor,
+      ignoreWorkingCopy: true,
+    });
+
+    await client.openReadSession();
+
+    expect(executor.requests[1]?.args).toContain("--ignore-working-copy");
+    expect(executor.requests[1]?.args).toContain("op");
+    expect(executor.requests[1]?.args).not.toContain("--at-operation");
+  });
+
   it("discovers a suffixed 0.44 version and snapshots once before fixed-operation reads", async () => {
     const first = commit(1, ROOT_COMMIT_ID, { currentWorkingCopy: true });
     const { client, executor } = clientWithSession(ok(jsonLine(first)));

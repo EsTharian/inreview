@@ -352,8 +352,14 @@
         "inreview.jj.path": {
           "type": "string",
           "default": "jj",
+          "scope": "machine",
+          "markdownDescription": "The absolute path or command name for the `jj` executable. Machine scope: a workspace's `.vscode/settings.json` cannot choose the binary that runs at startup (like `git.path`)."
+        },
+        "inreview.jj.ignoreWorkingCopy": {
+          "type": "boolean",
+          "default": true,
           "scope": "resource",
-          "markdownDescription": "The absolute path or command name for the `jj` executable."
+          "markdownDescription": "Open reviews at the repository's last operation without snapshotting the working copy (`jj --ignore-working-copy`). Untracked files are never folded into `@` by a review; turn off to review uncommitted working-copy changes."
         },
         "inreview.review.defaultChangeCount": {
           "type": "integer",
