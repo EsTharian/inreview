@@ -51,6 +51,21 @@ describe("viewed files controller", () => {
     harness.controller.dispose();
   });
 
+  it("reads the review once per review change, not once per editor switch", async () => {
+    const harness = createHarness(viewedRecord());
+    await harness.controller.update();
+    harness.editor.current = { document: { uri: harness.diffUri } };
+    await harness.controller.update();
+    await harness.controller.update();
+    expect(harness.service.getActiveReviewOrUndefined).toHaveBeenCalledTimes(1);
+    expect(harness.contexts.get(VIEWED_CONTEXT_KEYS.viewed)).toBe(true);
+
+    harness.reviewChanged();
+    await harness.controller.update();
+    expect(harness.service.getActiveReviewOrUndefined).toHaveBeenCalledTimes(2);
+    harness.controller.dispose();
+  });
+
   it("hides the progress without an active review", async () => {
     const harness = createHarness(undefined);
     await harness.controller.update();
@@ -103,10 +118,14 @@ function createHarness(record: ReviewRecord | undefined) {
     dispose: vi.fn(),
   };
   const contexts = new Map<string, unknown>();
+  const listeners: (() => void)[] = [];
   const service = {
     getActiveReviewOrUndefined: vi.fn(() => Promise.resolve(record)),
     setFileViewed: vi.fn(() => Promise.resolve(record)),
-    subscribe: vi.fn(() => ({ dispose: vi.fn() })),
+    subscribe: vi.fn((listener: () => void) => {
+      listeners.push(listener);
+      return { dispose: vi.fn() };
+    }),
   };
   const api = {
     window: {
@@ -132,6 +151,11 @@ function createHarness(record: ReviewRecord | undefined) {
   });
   return {
     controller,
+    reviewChanged: () => {
+      for (const listener of listeners) {
+        listener();
+      }
+    },
     service,
     statusBar,
     contexts,

@@ -41,6 +41,12 @@ export interface ViewedFilesControllerOptions {
   readonly logError?: (message: string, error: unknown) => void;
 }
 
+interface ActiveReviewViewedState {
+  readonly record: ReviewRecord;
+  readonly snapshot: Snapshot;
+  readonly states: ReadonlyMap<string, ViewedState>;
+}
+
 /**
  * The human reviewer's Mark/Unmark File as Viewed commands, the context keys
  * that pick the matching diff editor action, and the "k/N viewed" status bar
@@ -50,6 +56,9 @@ export class ViewedFilesController implements vscode.Disposable {
   readonly #options: ViewedFilesControllerOptions;
   readonly #statusBar: vscode.StatusBarItem;
   readonly #disposables: readonly vscode.Disposable[];
+  // read once per review change, not per editor switch: a large review's
+  // manifest is megabytes of validated JSON
+  #active: Promise<ActiveReviewViewedState | undefined> | undefined;
   #generation = 0;
 
   public constructor(options: ViewedFilesControllerOptions) {
@@ -65,6 +74,7 @@ export class ViewedFilesController implements vscode.Disposable {
         void this.update();
       }),
       options.service.subscribe(() => {
+        this.#active = undefined;
         void this.update();
       }),
     ];
@@ -84,19 +94,17 @@ export class ViewedFilesController implements vscode.Disposable {
     this.#generation += 1;
     const generation = this.#generation;
     try {
-      const record = await this.#options.service.getActiveReviewOrUndefined();
+      this.#active ??= this.readActiveReview();
+      const active = await this.#active;
       if (generation !== this.#generation) {
         return;
       }
-      const snapshot = record?.snapshots.find(
-        ({ id }) => id === record.review.currentSnapshotId,
-      );
-      if (record === undefined || snapshot === undefined) {
+      if (active === undefined) {
         this.#statusBar.hide();
         await this.setContext(undefined);
         return;
       }
-      const states = viewedStates(record, snapshot);
+      const { record, snapshot, states } = active;
       const progress = viewedProgress(states);
       this.#statusBar.text = `$(eye) ${String(progress.viewed)}/${String(progress.total)} viewed`;
       this.#statusBar.tooltip = `InReview: ${String(progress.viewed)} of ${String(progress.total)} files viewed${
@@ -109,6 +117,7 @@ export class ViewedFilesController implements vscode.Disposable {
         activeFileState(record, snapshot, states, this.activeEditorRequest()),
       );
     } catch (error) {
+      this.#active = undefined;
       this.#options.logError?.("Could not update the viewed-file state", error);
     }
   }
@@ -136,6 +145,18 @@ export class ViewedFilesController implements vscode.Disposable {
       fileId: request.fileId,
       viewed,
     });
+  }
+
+  private async readActiveReview(): Promise<
+    ActiveReviewViewedState | undefined
+  > {
+    const record = await this.#options.service.getActiveReviewOrUndefined();
+    const snapshot = record?.snapshots.find(
+      ({ id }) => id === record.review.currentSnapshotId,
+    );
+    return record === undefined || snapshot === undefined
+      ? undefined
+      : { record, snapshot, states: viewedStates(record, snapshot) };
   }
 
   private activeEditorRequest(): RevealFileRequest | undefined {
