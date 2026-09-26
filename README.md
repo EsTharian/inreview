@@ -17,6 +17,8 @@ and resolve them after it updates the code.
 - Use VS Code's native diff editor, syntax highlighting, themes, and Comments API.
 - Add comments to any line on the stored new side of a changed text file, or
   to the whole file.
+- Mark files as viewed, like GitHub's per-file **Viewed** checkbox, and see
+  how many of the review's files you have read.
 - Review added, modified, deleted, renamed, copied, binary, and symbolic-link entries.
 - Refresh a review after jj rewrites while keeping exact comment history.
 - Keep unmatched comments as outdated threads linked to their original snapshot.
@@ -87,8 +89,10 @@ was closed as a duplicate.
 8. Select a file under **Active Review** to open its native diff.
 9. Use the comment gutter on either stored side of a changed text file, or use
    **Add File Comment**.
-10. After a selected change is rewritten, run **InReview: Refresh Review**.
-11. After adding direct descendant changes to a workspace stack, run
+10. Tick a file's checkbox under **Active Review**, or use **Mark File as
+    Viewed** in the diff editor title, once you have read it.
+11. After a selected change is rewritten, run **InReview: Refresh Review**.
+12. After adding direct descendant changes to a workspace stack, run
     **InReview: Include New Changes**.
 
 InReview stores immutable snapshots. A thread remains inline only when its complete target and context map exactly and uniquely to the refreshed diff. Otherwise, it becomes **Outdated** and stays available from the Comments view.
@@ -134,6 +138,15 @@ remain linked to their immutable original snapshot. User comments can be
 edited or deleted. Agent replies are immutable. Resolved threads can be
 reopened.
 
+A **Viewed** mark belongs to one file path of one review and records a
+fingerprint of the file's new side in the combined diff. The review shows
+**k / N files viewed**, and the status bar repeats the count. When a refresh
+changes a viewed file, its mark no longer matches: the file reads **Changed
+since viewed** and counts as not viewed until you mark it again. Per-change
+entries show the state of their path in the whole review. Marks survive
+refresh, archive, and restore. Only you set them: MCP clients can read each
+file's viewed state through `read_review_metadata` but no tool changes it.
+
 ## Connect GitHub Copilot CLI
 
 The extension installs its packaged native bridge in stable extension storage.
@@ -170,7 +183,7 @@ register, and reconnects automatically if the daemon is replaced.
 | --- | --- |
 | `list_workspaces` | List canonical roots and host platforms registered with the bridge. |
 | `connect_workspace` | Bind the MCP session to the exact workspace root and active review. |
-| `read_review_metadata` | Read selected changes, snapshots, file metadata, and comment counts. |
+| `read_review_metadata` | Read selected changes, snapshots, file metadata with each file's viewed state, and comment counts. |
 | `read_comments` | Read filtered current, outdated, open, or resolved threads. |
 | `reply_comment` | Reply to one open thread as `Agent` without resolving it. |
 | `close_comments` | Atomically resolve one or more open threads with optional resolution notes. |
@@ -198,13 +211,15 @@ Use the Command Palette or the matching view and comment actions.
 | **InReview: Show Per-Change Diffs** | Show each selected change against its direct parent. |
 | **InReview: Add File Comment** | Add a comment that applies to the whole file. |
 | **InReview: Resolve Comment** / **Reopen Comment** | Change a thread's resolution state. |
+| **InReview: Mark File as Viewed** / **Unmark File as Viewed** | Track which files of the active review you have read. |
 | **InReview: Submit/Edit/Save/Cancel/Delete Comment** | Manage user comments through VS Code's Comments UI. |
 | **InReview: Copy InReview MCP Setup** | Copy the one-time native stdio command or JSON MCP configuration. |
 | **InReview: Show MCP Bridge Status** | Show the native bridge installation and workspace registration state. |
 
 ## Views
 
-- **Active Review** shows the selected changes, current snapshot, display mode, and changed files.
+- **Active Review** shows the selected changes, current snapshot, display mode,
+  changed files with their **Viewed** checkboxes, and how many files you have viewed.
 - **Comments** groups open current, open outdated, and resolved threads.
 - **History** shows the latest 20 archived reviews.
 
