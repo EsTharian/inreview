@@ -19,6 +19,8 @@ export async function run(): Promise<void> {
   assert.ok(commands.includes("inreview.submitComment"));
   assert.ok(commands.includes("inreview.editComment"));
   assert.ok(commands.includes("inreview.deleteComment"));
+  assert.ok(commands.includes("inreview.markFileViewed"));
+  assert.ok(commands.includes("inreview.unmarkFileViewed"));
 
   const exportsValue: unknown = extension.exports;
   assert.ok(
@@ -88,6 +90,23 @@ export async function run(): Promise<void> {
     } finally {
       cancellation.dispose();
     }
+
+    await vscode.commands.executeCommand("inreview.markFileViewed", modified.uri);
+    const viewed = await ports.service.getActiveReviewOrUndefined();
+    assert.deepEqual(
+      viewed?.viewedFiles.map(({ path }) => path),
+      [file.currentPath ?? file.originalPath],
+      "Mark File as Viewed stores a mark for the diff editor's file.",
+    );
+    await vscode.commands.executeCommand("inreview.unmarkFileViewed", {
+      reviewId: record.review.id,
+      snapshotId: snapshot.id,
+      view: view.identity,
+      fileId: file.fileId,
+      readOnly: false,
+    });
+    const unviewed = await ports.service.getActiveReviewOrUndefined();
+    assert.deepEqual(unviewed?.viewedFiles, []);
   }
 }
 
@@ -119,6 +138,7 @@ interface HostReviewRecord {
     readonly id: string;
     readonly currentSnapshotId: string;
   };
+  readonly viewedFiles: readonly { readonly path: string }[];
   readonly snapshots: readonly {
     readonly id: string;
     readonly views: readonly {
