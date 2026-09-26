@@ -162,7 +162,9 @@ You do not need one MCP entry per repository. Ask the agent to list the open
 workspaces, connect to one returned absolute root, and review its open comments.
 Copilot CLI can start before VS Code. The MCP frontend keeps the per-user
 daemon available, waits briefly for a newly opened trusted workspace to
-register, and reconnects automatically if the daemon is replaced.
+register, and reconnects automatically if the daemon is replaced. If the
+active review or its snapshot changed while it was away, every review tool
+returns `STALE_CONNECTION` until the client calls `connect_workspace` again.
 
 ### MCP tools
 

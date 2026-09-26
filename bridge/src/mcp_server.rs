@@ -48,6 +48,17 @@ struct BridgeClientState {
     connection: Option<BridgeConnection>,
     workspace_root: Option<String>,
     workspace_bound: bool,
+    // fork: the review and snapshot the agent's own connect_workspace saw. A
+    // reconnect that restores the binding onto a different one leaves the
+    // session stale until the agent connects again.
+    bound_review: Option<ReviewIdentity>,
+    stale: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ReviewIdentity {
+    review_id: String,
+    snapshot_id: String,
 }
 
 #[async_trait]
@@ -105,6 +116,9 @@ impl BridgeClient {
                     }
                     Err(error) => return Err(error),
                 }
+                if self.state.lock().await.stale {
+                    return Ok(stale_review_error());
+                }
             }
             match self
                 .request_tool(&connection, name, arguments.clone())
@@ -136,6 +150,8 @@ impl BridgeClient {
                                 {
                                     state.workspace_root = Some(root);
                                     state.workspace_bound = true;
+                                    state.bound_review = review_identity(&completed);
+                                    state.stale = false;
                                 }
                             }
                             return Ok(completed);
@@ -275,6 +291,7 @@ impl BridgeClient {
                 "The InReview workspace did not register after the bridge reconnected.",
             ));
         }
+        let restored = review_identity(&result);
         let mut state = self.state.lock().await;
         if state
             .connection
@@ -282,6 +299,9 @@ impl BridgeClient {
             .is_some_and(|current| current.peer.id == connection.peer.id)
         {
             state.workspace_bound = true;
+            if state.bound_review != restored {
+                state.stale = true;
+            }
         }
         Ok(())
     }
@@ -585,6 +605,41 @@ fn tool_succeeded(value: &Value) -> bool {
     value.get("isError").and_then(Value::as_bool) != Some(true)
 }
 
+fn review_identity(value: &Value) -> Option<ReviewIdentity> {
+    let structured = value.get("structuredContent")?;
+    Some(ReviewIdentity {
+        review_id: structured
+            .get("activeReview")?
+            .get("reviewId")?
+            .as_str()?
+            .to_owned(),
+        snapshot_id: structured
+            .get("currentSnapshot")?
+            .get("snapshotId")?
+            .as_str()?
+            .to_owned(),
+    })
+}
+
+fn stale_review_error() -> Value {
+    let structured = json!({
+        "status": "error",
+        "error": {
+            "code": "STALE_CONNECTION",
+            "message": "The InReview bridge reconnected and the active review or its snapshot changed since this session connected. Call connect_workspace again and read the comments before replying.",
+            "reconnectRequired": true,
+        },
+    });
+    json!({
+        "content": [{
+            "type": "text",
+            "text": structured.to_string(),
+        }],
+        "structuredContent": structured,
+        "isError": true,
+    })
+}
+
 fn workspace_list_is_empty(value: &Value) -> bool {
     value
         .get("structuredContent")
@@ -635,6 +690,20 @@ mod tests {
         workspace_registered: AtomicBool,
         hellos: AtomicUsize,
         workspace_connections: AtomicUsize,
+        snapshot_id: std::sync::Mutex<String>,
+        replies: AtomicUsize,
+    }
+
+    impl TestDaemon {
+        fn new(workspace_registered: bool) -> Self {
+            Self {
+                workspace_registered: AtomicBool::new(workspace_registered),
+                hellos: AtomicUsize::new(0),
+                workspace_connections: AtomicUsize::new(0),
+                snapshot_id: std::sync::Mutex::new("snapshot-1".to_owned()),
+                replies: AtomicUsize::new(0),
+            }
+        }
     }
 
     #[async_trait]
@@ -662,7 +731,7 @@ mod tests {
                 {
                     if self.workspace_registered.load(Ordering::Acquire) {
                         self.workspace_connections.fetch_add(1, Ordering::AcqRel);
-                        Ok(successful_tool_result("connected"))
+                        Ok(connected_tool_result(&self.snapshot_id.lock().unwrap()))
                     } else {
                         Ok(failed_tool_result("WORKSPACE_MISMATCH"))
                     }
@@ -671,6 +740,12 @@ mod tests {
                     if params.get("name").and_then(Value::as_str)
                         == Some("read_review_metadata") =>
                 {
+                    Ok(successful_tool_result("success"))
+                }
+                "call_tool"
+                    if params.get("name").and_then(Value::as_str) == Some("reply_comment") =>
+                {
+                    self.replies.fetch_add(1, Ordering::AcqRel);
                     Ok(successful_tool_result("success"))
                 }
                 "close_session" => Ok(json!({})),
@@ -717,6 +792,22 @@ mod tests {
         })
     }
 
+    fn connected_tool_result(snapshot_id: &str) -> Value {
+        let structured = json!({
+            "status": "connected",
+            "activeReview": { "reviewId": "review-1" },
+            "currentSnapshot": { "snapshotId": snapshot_id },
+        });
+        json!({
+            "content": [{
+                "type": "text",
+                "text": structured.to_string(),
+            }],
+            "structuredContent": structured,
+            "isError": false,
+        })
+    }
+
     fn failed_tool_result(code: &str) -> Value {
         let structured = json!({
             "status": "error",
@@ -744,11 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconnects_after_the_daemon_connection_closes() {
-        let daemon = Arc::new(TestDaemon {
-            workspace_registered: AtomicBool::new(true),
-            hellos: AtomicUsize::new(0),
-            workspace_connections: AtomicUsize::new(0),
-        });
+        let daemon = Arc::new(TestDaemon::new(true));
         let (first_stream, first_peer) = test_connection(Arc::clone(&daemon));
         let (second_stream, _second_peer) = test_connection(Arc::clone(&daemon));
         let connector = Arc::new(TestConnector {
@@ -782,11 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn waits_for_a_workspace_that_registers_after_copilot_starts() {
-        let daemon = Arc::new(TestDaemon {
-            workspace_registered: AtomicBool::new(false),
-            hellos: AtomicUsize::new(0),
-            workspace_connections: AtomicUsize::new(0),
-        });
+        let daemon = Arc::new(TestDaemon::new(false));
         let (stream, _peer) = test_connection(Arc::clone(&daemon));
         let connector = Arc::new(TestConnector {
             streams: Mutex::new(VecDeque::from([stream])),
@@ -811,12 +894,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restores_the_workspace_binding_after_reconnecting() {
-        let daemon = Arc::new(TestDaemon {
-            workspace_registered: AtomicBool::new(true),
-            hellos: AtomicUsize::new(0),
-            workspace_connections: AtomicUsize::new(0),
+    async fn refuses_calls_after_a_reconnect_to_a_changed_snapshot_until_reconnected() {
+        let daemon = Arc::new(TestDaemon::new(true));
+        let (first_stream, first_peer) = test_connection(Arc::clone(&daemon));
+        let (second_stream, _second_peer) = test_connection(Arc::clone(&daemon));
+        let connector = Arc::new(TestConnector {
+            streams: Mutex::new(VecDeque::from([first_stream, second_stream])),
+            connections: AtomicUsize::new(0),
         });
+        let client = BridgeClient::new(connector);
+        let connect = json!({ "workspace_root": "/work/repo" });
+        let reply = json!({ "comment_id": "comment-1", "body": "Checked." });
+
+        assert!(tool_succeeded(
+            &client
+                .call_tool("connect_workspace", connect.clone())
+                .await
+                .unwrap()
+        ));
+        first_peer.close().await;
+        for _ in 0..50 {
+            if client.live_connection().await.is_none() {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        // the daemon restarted and the review was refreshed meanwhile
+        *daemon.snapshot_id.lock().unwrap() = "snapshot-2".to_owned();
+
+        let refused = client
+            .call_tool("reply_comment", reply.clone())
+            .await
+            .unwrap();
+        assert_eq!(refused["isError"], true);
+        assert_eq!(
+            refused["structuredContent"]["error"]["code"],
+            "STALE_CONNECTION"
+        );
+        assert_eq!(daemon.replies.load(Ordering::Acquire), 0);
+        let still_refused = client
+            .call_tool("read_review_metadata", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            still_refused["structuredContent"]["error"]["code"],
+            "STALE_CONNECTION"
+        );
+
+        assert!(tool_succeeded(
+            &client
+                .call_tool("connect_workspace", connect)
+                .await
+                .unwrap()
+        ));
+        assert!(tool_succeeded(
+            &client.call_tool("reply_comment", reply).await.unwrap()
+        ));
+        assert_eq!(daemon.replies.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn restores_the_workspace_binding_after_reconnecting() {
+        let daemon = Arc::new(TestDaemon::new(true));
         let (first_stream, first_peer) = test_connection(Arc::clone(&daemon));
         let (second_stream, _second_peer) = test_connection(Arc::clone(&daemon));
         let connector = Arc::new(TestConnector {
