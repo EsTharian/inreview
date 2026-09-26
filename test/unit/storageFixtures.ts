@@ -186,5 +186,6 @@ export function makeReviewRecord(
         ],
       },
     ],
+    viewedFiles: [],
   };
 }

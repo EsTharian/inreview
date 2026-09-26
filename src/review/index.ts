@@ -5,3 +5,4 @@ export * from "./mutationQueue";
 export * from "./refreshService";
 export * from "./reviewService";
 export * from "./types";
+export * from "./viewedFiles";

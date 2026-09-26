@@ -761,6 +761,7 @@ export class ReviewService {
       },
       snapshots: [prepared.snapshot],
       threads: [],
+      viewedFiles: [],
     });
     await this.#store.commitPreparedReviews(
       async (blobs) => {

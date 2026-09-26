@@ -3,7 +3,7 @@ import { z } from "zod";
 import { StorageError } from "../domain/errors";
 import { reviewRecordSchema } from "../domain/comments";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export const reviewIndexEntrySchema = z
   .object({
@@ -51,7 +51,7 @@ type ManifestKind = "index" | "review";
 type Migrator = (value: Record<string, unknown>) => Record<string, unknown>;
 
 const migrations: Record<ManifestKind, ReadonlyMap<number, Migrator>> = {
-  index: new Map([
+  index: new Map<number, Migrator>([
     [
       0,
       (value) => ({
@@ -60,8 +60,9 @@ const migrations: Record<ManifestKind, ReadonlyMap<number, Migrator>> = {
         schemaVersion: 1,
       }),
     ],
+    [1, (value) => ({ ...value, schemaVersion: 2 })],
   ]),
-  review: new Map([
+  review: new Map<number, Migrator>([
     [
       0,
       (value) => ({
@@ -70,8 +71,26 @@ const migrations: Record<ManifestKind, ReadonlyMap<number, Migrator>> = {
         schemaVersion: 1,
       }),
     ],
+    [
+      1,
+      // schema 2 adds the reviewer's per-file viewed marks; a v1 review has none
+      (value) => ({
+        ...value,
+        schemaVersion: 2,
+        record: withNoViewedFiles(value.record),
+      }),
+    ],
   ]),
 };
+
+function withNoViewedFiles(record: unknown): unknown {
+  return typeof record === "object" &&
+    record !== null &&
+    !Array.isArray(record) &&
+    !("viewedFiles" in record)
+    ? { ...record, viewedFiles: [] }
+    : record;
+}
 
 function migrate(kind: ManifestKind, value: unknown): unknown {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
