@@ -413,6 +413,43 @@ describe("MCP review reads and mutations", () => {
     }
   });
 
+  it("refuses a reply after the snapshot the session read is replaced", async () => {
+    const harness = await createHarness();
+    try {
+      const handlers = connectedHandlers(harness);
+      await handlers.connectWorkspace({ workspace_root: repositoryRoot });
+      const snapshot = harness.record.snapshots[0];
+      if (snapshot === undefined) {
+        throw new Error("The fixture has no snapshot.");
+      }
+      const refreshed = { ...snapshot, id: randomUUID() };
+      await harness.store.putReview({
+        ...harness.record,
+        review: {
+          ...harness.record.review,
+          currentSnapshotId: refreshed.id,
+          snapshotIds: [...harness.record.review.snapshotIds, refreshed.id],
+        },
+        snapshots: [...harness.record.snapshots, refreshed],
+      });
+
+      const commentId = harness.record.threads[0]?.commentId ?? "";
+      const refused = replyCommentOutputSchema.parse(
+        (await handlers.replyComment({ comment_id: commentId, body: "Checked." }))
+          .structuredContent,
+      );
+      expect(refused).toMatchObject({
+        status: "error",
+        error: { code: "STALE_CONNECTION", reconnectRequired: true },
+      });
+      expect(
+        (await harness.store.getActiveReview())?.threads[0]?.messages,
+      ).toEqual(harness.record.threads[0]?.messages);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("maps domain failures without exposing details", async () => {
     const harness = await createHarness();
     try {
