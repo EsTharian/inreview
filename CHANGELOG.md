@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Mark a file as viewed from its checkbox under Active Review or from the diff
+  editor title. The review and the status bar show how many files are viewed;
+  a refresh that changes a viewed file marks it as changed since viewed.
+- `read_review_metadata` reports each file's viewed state and the review's
+  viewed-file counts. No MCP tool can change them.
+
+### Changed
+
+- Review storage moves to schema 2. Existing reviews migrate on read; once a
+  build with viewed files has written the store, older builds refuse to open
+  it instead of quarantining its reviews.
+
 ## 0.0.1 - 2026-08-26
 
 ### Added

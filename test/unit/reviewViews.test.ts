@@ -20,6 +20,8 @@ import type {
   ReviewStartSession,
 } from "../../src/review";
 import { buildHistoryReviewItem } from "../../src/vscode/historyTree";
+import { viewedFileFingerprint } from "../../src/review/viewedFiles";
+import type { ReviewTreeItem } from "../../src/vscode/treeTypes";
 import { makeReviewRecord } from "./storageFixtures";
 
 const fingerprint = "a".repeat(64);
@@ -69,6 +71,52 @@ describe("review tree models", () => {
       );
     },
   );
+
+  it("shows each file's viewed state as a checkbox and the review's viewed progress", () => {
+    const record = makeReviewRecord(fingerprint);
+    const unviewed = buildActiveReviewItem(record, "combined");
+    expect(unviewed.description).toContain("0 / 1 files viewed");
+    expect(firstFileItem(unviewed)).toMatchObject({ checked: false });
+    expect(firstFileItem(unviewed)?.iconColor).toBeUndefined();
+
+    const file = record.snapshots[0]?.views.find(
+      ({ identity }) => identity.mode === "combined",
+    )?.files[0];
+    if (file === undefined) {
+      throw new Error("The fixture has no combined file.");
+    }
+    const viewedAt = "2026-01-02T00:00:00.000Z";
+    const viewed = {
+      ...record,
+      viewedFiles: [
+        { path: "file.txt", fingerprint: viewedFileFingerprint(file), viewedAt },
+      ],
+    };
+    for (const mode of ["combined", "per-change"] as const) {
+      const root = buildActiveReviewItem(viewed, mode);
+      expect(root.description).toContain("1 / 1 files viewed");
+      expect(firstFileItem(root)).toMatchObject({
+        checked: true,
+        iconColor: "disabledForeground",
+      });
+      expect(firstFileItem(root)?.description).toMatch(/^Viewed · /u);
+    }
+
+    const changed = buildActiveReviewItem(
+      {
+        ...record,
+        viewedFiles: [{ path: "file.txt", fingerprint: "c".repeat(64), viewedAt }],
+      },
+      "combined",
+    );
+    expect(changed.description).toContain("0 / 1 files viewed");
+    expect(changed.tooltip).toContain("1 changed since viewed");
+    expect(firstFileItem(changed)).toMatchObject({
+      checked: false,
+      iconColor: "list.warningForeground",
+    });
+    expect(firstFileItem(changed)?.description).toMatch(/^Changed since viewed · /u);
+  });
 
   it("groups current, outdated, and resolved comments", () => {
     const record = makeReviewRecord(fingerprint);
@@ -379,6 +427,12 @@ describe("review command flows", () => {
     });
   });
 });
+
+function firstFileItem(root: ReviewTreeItem): ReviewTreeItem | undefined {
+  return root.children?.find(({ contextValue }) =>
+    contextValue.startsWith("inreview.files."),
+  )?.children?.[0];
+}
 
 class FakeState implements WorkspacePreferenceStore {
   readonly #values = new Map<string, unknown>();

@@ -308,6 +308,9 @@ export class RefreshService {
             },
             snapshots: [...latest.snapshots, prepared.snapshot],
             threads,
+            // marks keep their fingerprints; a file whose content changed now
+            // reads as changed since viewed
+            viewedFiles: latest.viewedFiles,
           }),
         ];
       },

@@ -484,6 +484,7 @@ function buildFixture(
     },
     snapshots: [historical, current],
     threads: [],
+    viewedFiles: [],
   };
   return { record, contents };
 }

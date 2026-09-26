@@ -2,6 +2,7 @@ export type ReviewLifecycleErrorCode =
   | "active-review-conflict"
   | "archived-read-only"
   | "confirmation-required"
+  | "file-not-viewable"
   | "invalid-change-count"
   | "no-active-review"
   | "review-not-found"
@@ -72,5 +73,14 @@ export class ReviewNotFoundError extends ReviewLifecycleError {
 export class StaleReviewError extends ReviewLifecycleError {
   public constructor(message: string) {
     super("stale-review", message);
+  }
+}
+
+export class FileNotViewableError extends ReviewLifecycleError {
+  public constructor(public readonly path: string) {
+    super(
+      "file-not-viewable",
+      `${path} is not in the review's combined diff (its changes cancel out across the selected changes), so it cannot be marked as viewed.`,
+    );
   }
 }

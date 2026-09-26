@@ -169,11 +169,27 @@ export const commentThreadSchema = z
   });
 export type CommentThread = z.infer<typeof commentThreadSchema>;
 
+/**
+ * A human reviewer's "viewed" mark on one file of a review, keyed by the
+ * file's repository-relative path. The fingerprint identifies the file's
+ * reviewed new side; when a refresh changes it, the mark is stale and the
+ * file reads as changed since viewed.
+ */
+export const viewedFileMarkSchema = z
+  .object({
+    path: pathSchema,
+    fingerprint: sha256Schema,
+    viewedAt: timestampSchema,
+  })
+  .strict();
+export type ViewedFileMark = z.infer<typeof viewedFileMarkSchema>;
+
 export const reviewRecordSchema = z
   .object({
     review: reviewSchema,
     snapshots: z.array(snapshotSchema).min(1),
     threads: z.array(commentThreadSchema),
+    viewedFiles: z.array(viewedFileMarkSchema),
   })
   .strict();
 
@@ -187,7 +203,13 @@ export function parseReviewRecord(value: unknown): ReviewRecord {
     });
   }
 
-  const { review, snapshots, threads } = parsed.data;
+  const { review, snapshots, threads, viewedFiles } = parsed.data;
+  if (new Set(viewedFiles.map(({ path }) => path)).size !== viewedFiles.length) {
+    throw new DomainError(
+      "INVARIANT_VIOLATION",
+      "A review can hold at most one viewed mark per file path.",
+    );
+  }
   const snapshotIds = new Set(snapshots.map(({ id }) => id));
   if (
     snapshotIds.size !== snapshots.length ||

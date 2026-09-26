@@ -6,6 +6,11 @@ import type {
   ViewManifest,
 } from "../domain/review";
 import {
+  viewedProgress,
+  viewedStates,
+  type ViewedState,
+} from "../review/viewedFiles";
+import {
   ReviewTreeSource,
   type ReviewTreeItem,
   type TreeState,
@@ -60,11 +65,18 @@ export function buildActiveReviewItem(
   const snapshot = currentSnapshot(record);
   const counts = record.review.counts;
   const countText = `${String(counts.open)} open, ${String(counts.outdated)} outdated, ${String(counts.resolved)} resolved`;
+  const states = viewedStates(record, snapshot);
+  const progress = viewedProgress(states);
+  const viewedText = `${String(progress.viewed)} / ${String(progress.total)} files viewed`;
+  const changedText =
+    progress.changed > 0
+      ? `, ${String(progress.changed)} changed since viewed`
+      : "";
   return {
     id: `review:${record.review.id}`,
     label: record.review.name,
-    description: `Active · ${countText}`,
-    tooltip: `${record.review.name}\n${countText}`,
+    description: `Active · ${viewedText} · ${countText}`,
+    tooltip: `${record.review.name}\n${viewedText}${changedText}\n${countText}`,
     contextValue: "inreview.review.active",
     icon: "git-pull-request",
     collapsible: "expanded",
@@ -79,7 +91,7 @@ export function buildActiveReviewItem(
         icon: "history",
         collapsible: "none",
       },
-      ...buildFileGroups(record, snapshot, mode),
+      ...buildFileGroups(record, snapshot, mode, states),
     ],
   };
 }
@@ -112,6 +124,7 @@ function buildFileGroups(
   record: ReviewRecord,
   snapshot: Snapshot,
   mode: DisplayMode,
+  states: ReadonlyMap<string, ViewedState>,
 ): readonly ReviewTreeItem[] {
   const views =
     mode === "combined"
@@ -124,13 +137,14 @@ function buildFileGroups(
           );
           return view === undefined ? [] : [view];
         });
-  return views.map((view) => buildViewGroup(record, snapshot, view));
+  return views.map((view) => buildViewGroup(record, snapshot, view, states));
 }
 
 function buildViewGroup(
   record: ReviewRecord,
   snapshot: Snapshot,
   view: ViewManifest,
+  states: ReadonlyMap<string, ViewedState>,
 ): ReviewTreeItem {
   const viewKey =
     view.identity.mode === "combined"
@@ -172,7 +186,7 @@ function buildViewGroup(
             },
           ]
         : view.files.map((file) =>
-            buildFileItem(record, snapshot, view.identity, file),
+            buildFileItem(record, snapshot, view.identity, file, states),
           ),
   };
 }
@@ -182,6 +196,7 @@ function buildFileItem(
   snapshot: Snapshot,
   view: ViewIdentity,
   file: FileManifestEntry,
+  states: ReadonlyMap<string, ViewedState>,
 ): ReviewTreeItem {
   const path = file.currentPath ?? file.originalPath ?? "Unknown file";
   const renamed =
@@ -197,13 +212,22 @@ function buildFileItem(
       projection.path === path &&
       sameView(projection.view, view),
   ).length;
+  // a per-change entry shows the review-wide state of its path; a path with no
+  // net change across the review has none and gets no checkbox
+  const viewed = states.get(path);
   return {
     id: `file:${snapshot.id}:${viewKey(view)}:${file.fileId}`,
     label: renamed,
-    description: `${statusCode(file.status)} · ${file.kind} · +${String(file.addedLines)} −${String(file.deletedLines)}${commentCount > 0 ? ` · ${String(commentCount)} comments` : ""}`,
-    tooltip: `${renamed}\n${file.status}, ${file.kind}\n${String(commentCount)} open comments`,
+    description: `${viewedPrefix(viewed)}${statusCode(file.status)} · ${file.kind} · +${String(file.addedLines)} −${String(file.deletedLines)}${commentCount > 0 ? ` · ${String(commentCount)} comments` : ""}`,
+    tooltip: `${renamed}\n${file.status}, ${file.kind}\n${String(commentCount)} open comments${viewed === undefined ? "" : `\n${viewedTooltip(viewed)}`}`,
     contextValue: `inreview.file.${file.status}.${file.kind}`,
     icon: fileIcon(file),
+    ...(viewed === undefined ? {} : { checked: viewed === "viewed" }),
+    ...(viewed === "viewed"
+      ? { iconColor: "disabledForeground" }
+      : viewed === "changed"
+        ? { iconColor: "list.warningForeground" }
+        : {}),
     collapsible: "none",
     command: {
       command: "inreview.revealFile",
@@ -269,6 +293,22 @@ function fileIcon(file: FileManifestEntry): string {
     return "link";
   }
   return file.status === "deleted" ? "diff-removed" : "diff";
+}
+
+function viewedPrefix(state: ViewedState | undefined): string {
+  if (state === "viewed") {
+    return "Viewed · ";
+  }
+  return state === "changed" ? "Changed since viewed · " : "";
+}
+
+function viewedTooltip(state: ViewedState): string {
+  if (state === "viewed") {
+    return "Viewed";
+  }
+  return state === "changed"
+    ? "Changed since you marked it viewed"
+    : "Not viewed";
 }
 
 function firstNonEmpty(...values: readonly (string | undefined)[]): string {

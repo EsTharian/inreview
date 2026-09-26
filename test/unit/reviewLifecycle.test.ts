@@ -25,8 +25,11 @@ import {
   LargeDiffConfirmationRequiredError,
   NoActiveReviewError,
   ReviewService,
+  viewedProgress,
+  viewedStates,
   type ReviewReadSession,
   type ReviewRepository,
+  type SetFileViewedInput,
 } from "../../src/review";
 import { ReviewStore } from "../../src/storage";
 
@@ -725,6 +728,89 @@ describe("review lifecycle", () => {
     }
   });
 
+  it("keeps a viewed mark through an unchanged rewrite and flags changed content", async () => {
+    const harness = await createHarness([
+      version(["change-a"], ["commit-a"], "Initial"),
+      version(["change-a"], ["commit-b"], "Same content"),
+      version(["change-a"], ["commit-c"], "New content", {
+        newText: "rewritten",
+      }),
+    ]);
+    const events: string[] = [];
+    harness.service.subscribe(({ type }) => events.push(type));
+    try {
+      const started = await harness.service.startReview({
+        requestedChangeCount: 1,
+      });
+      expect(progressOf(started.record)).toEqual({ viewed: 0, changed: 0, total: 1 });
+
+      const marked = await harness.service.setFileViewed(
+        combinedFileRequest(started.record, true),
+      );
+      expect(progressOf(marked)).toEqual({ viewed: 1, changed: 0, total: 1 });
+      expect(
+        await harness.service.setFileViewed(combinedFileRequest(marked, true)),
+      ).toEqual(marked);
+
+      const sameContent = await harness.service.refreshReview();
+      expect(sameContent.changed).toBe(true);
+      expect(stateOf(sameContent.record)).toBe("viewed");
+
+      const newContent = await harness.service.refreshReview();
+      expect(newContent.changed).toBe(true);
+      expect(stateOf(newContent.record)).toBe("changed");
+      expect(progressOf(newContent.record)).toEqual({ viewed: 0, changed: 1, total: 1 });
+
+      await expect(
+        harness.service.setFileViewed(combinedFileRequest(marked, true)),
+      ).rejects.toMatchObject({ code: "stale-review" });
+
+      const remarked = await harness.service.setFileViewed(
+        combinedFileRequest(newContent.record, true),
+      );
+      expect(stateOf(remarked)).toBe("viewed");
+      expect(events).toEqual([
+        "started",
+        "viewed",
+        "refreshed",
+        "refreshed",
+        "viewed",
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("keeps viewed marks through archive and restore and never marks an archived review", async () => {
+    const harness = await createHarness([
+      version(["change-a"], ["commit-a"], "Lifecycle"),
+    ]);
+    try {
+      const started = await harness.service.startReview({
+        requestedChangeCount: 1,
+      });
+      const marked = await harness.service.setFileViewed(
+        combinedFileRequest(started.record, true),
+      );
+      const archived = await harness.service.archiveActiveReview();
+      expect(archived.viewedFiles).toEqual(marked.viewedFiles);
+      await expect(
+        harness.service.setFileViewed(combinedFileRequest(marked, false)),
+      ).rejects.toBeInstanceOf(NoActiveReviewError);
+
+      const restored = await harness.service.restoreReview(started.record.review.id);
+      expect(stateOf(restored)).toBe("viewed");
+
+      const unmarked = await harness.service.setFileViewed(
+        combinedFileRequest(restored, false),
+      );
+      expect(unmarked.viewedFiles).toEqual([]);
+      expect(stateOf(unmarked)).toBe("unviewed");
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("retains only the newest 20 archived reviews", async () => {
     const versions = Array.from({ length: 22 }, (_, index) =>
       version(
@@ -954,6 +1040,43 @@ function modificationPatch(
     `+${newText}`,
     "",
   ].join("\n");
+}
+
+function combinedFileRequest(
+  record: ReviewRecord,
+  viewed: boolean,
+): SetFileViewedInput {
+  const snapshot = currentSnapshotOf(record);
+  const file = snapshot.views.find(({ identity }) => identity.mode === "combined")
+    ?.files[0];
+  if (file === undefined) {
+    throw new Error("The test review has no combined file.");
+  }
+  return {
+    reviewId: record.review.id,
+    snapshotId: snapshot.id,
+    view: { mode: "combined" },
+    fileId: file.fileId,
+    viewed,
+  };
+}
+
+function stateOf(record: ReviewRecord): string | undefined {
+  return viewedStates(record, currentSnapshotOf(record)).get("file.txt");
+}
+
+function progressOf(record: ReviewRecord) {
+  return viewedProgress(viewedStates(record, currentSnapshotOf(record)));
+}
+
+function currentSnapshotOf(record: ReviewRecord) {
+  const snapshot = record.snapshots.find(
+    ({ id }) => id === record.review.currentSnapshotId,
+  );
+  if (snapshot === undefined) {
+    throw new Error("The test review has no current snapshot.");
+  }
+  return snapshot;
 }
 
 function deterministicIds(): () => string {

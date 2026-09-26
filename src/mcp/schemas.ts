@@ -63,6 +63,21 @@ const commentCountsOutputSchema = z
   })
   .strict();
 
+// The human reviewer's viewed marks, read-only: no MCP tool changes them.
+export const viewedStateOutputSchema = z.enum([
+  "viewed",
+  "changed_since_viewed",
+  "not_viewed",
+]);
+
+const viewedFileCountsOutputSchema = z
+  .object({
+    viewed: z.number().int().nonnegative(),
+    changedSinceViewed: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const reviewSummarySchema = z
   .object({
     reviewId: uuidSchema,
@@ -158,6 +173,8 @@ const metadataFileSchema = z
     deletedLines: z.number().int().nonnegative(),
     commentableRanges: z.array(lineRangeSchema).optional(),
     summary: fileSummarySchema.optional(),
+    // absent for a path with no net change across the review
+    viewedState: viewedStateOutputSchema.optional(),
   })
   .strict();
 
@@ -199,6 +216,7 @@ export const readReviewMetadataOutputSchema = z.discriminatedUnion("status", [
           actualChangeCount: z.number().int().positive(),
           orderedChangeIds: z.array(identifierSchema).min(1),
           commentCounts: commentCountsOutputSchema,
+          viewedFileCounts: viewedFileCountsOutputSchema,
         })
         .strict(),
       currentSnapshot: z

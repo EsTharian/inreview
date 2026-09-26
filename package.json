@@ -41,6 +41,8 @@
     "onCommand:inreview.addFileComment",
     "onCommand:inreview.resolveComment",
     "onCommand:inreview.reopenComment",
+    "onCommand:inreview.markFileViewed",
+    "onCommand:inreview.unmarkFileViewed",
     "onCommand:inreview.submitComment",
     "onCommand:inreview.editComment",
     "onCommand:inreview.saveComment",
@@ -178,6 +180,20 @@
         "enablement": "isWorkspaceTrusted"
       },
       {
+        "command": "inreview.markFileViewed",
+        "title": "Mark File as Viewed",
+        "category": "InReview",
+        "icon": "$(circle-large-outline)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "inreview.unmarkFileViewed",
+        "title": "Unmark File as Viewed",
+        "category": "InReview",
+        "icon": "$(pass-filled)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
         "command": "inreview.submitComment",
         "title": "Submit Comment",
         "category": "InReview",
@@ -295,11 +311,33 @@
           "group": "inline@2"
         }
       ],
+      "editor/title": [
+        {
+          "command": "inreview.markFileViewed",
+          "when": "isWorkspaceTrusted && inreview.activeFileViewable && !inreview.activeFileViewed && (resourceScheme == inreview-modified || resourceScheme == inreview-original)",
+          "group": "navigation@1"
+        },
+        {
+          "command": "inreview.unmarkFileViewed",
+          "when": "isWorkspaceTrusted && inreview.activeFileViewable && inreview.activeFileViewed && (resourceScheme == inreview-modified || resourceScheme == inreview-original)",
+          "group": "navigation@1"
+        }
+      ],
       "editor/context": [
         {
           "command": "inreview.addFileComment",
           "when": "isWorkspaceTrusted && (resourceScheme == inreview-modified || resourceScheme == inreview-original)",
           "group": "inreview@1"
+        },
+        {
+          "command": "inreview.markFileViewed",
+          "when": "isWorkspaceTrusted && inreview.activeFileViewable && !inreview.activeFileViewed && (resourceScheme == inreview-modified || resourceScheme == inreview-original)",
+          "group": "inreview@2"
+        },
+        {
+          "command": "inreview.unmarkFileViewed",
+          "when": "isWorkspaceTrusted && inreview.activeFileViewable && inreview.activeFileViewed && (resourceScheme == inreview-modified || resourceScheme == inreview-original)",
+          "group": "inreview@2"
         }
       ],
       "comments/commentThread/title": [

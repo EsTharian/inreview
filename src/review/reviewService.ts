@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { parseReviewRecord, type ReviewRecord } from "../domain/comments";
 import { StorageError } from "../domain/errors";
+import { viewIdentityKey, type ViewIdentity } from "../domain/review";
 import {
   JjAmbiguousChangeError,
   JjConflictError,
@@ -18,6 +19,7 @@ import type { ReviewStoreOptions, StorageLocation } from "../storage/reviewStore
 import {
   ActiveReviewConflictError,
   ArchivedReviewReadOnlyError,
+  FileNotViewableError,
   InvalidChangeCountError,
   LargeDiffConfirmationRequiredError,
   NoActiveReviewError,
@@ -42,6 +44,7 @@ import type {
   ReviewRepository,
   ReviewSubscription,
 } from "./types";
+import { nextViewedMarks, viewedFilePath, viewedStates } from "./viewedFiles";
 
 const MAX_INTERACTIVE_SELECTION = 200;
 
@@ -156,6 +159,14 @@ export interface ReviewServiceOptions {
   readonly clock?: () => Date;
   readonly uuid?: () => string;
   readonly projectComments?: CommentProjectionHook;
+}
+
+export interface SetFileViewedInput {
+  readonly reviewId: string;
+  readonly snapshotId: string;
+  readonly view: ViewIdentity;
+  readonly fileId: string;
+  readonly viewed: boolean;
 }
 
 export interface CreateReviewServiceOptions {
@@ -659,6 +670,64 @@ export class ReviewService {
     });
   }
 
+  /**
+   * Marks or unmarks one file of the active review as viewed by the human
+   * reviewer. No MCP tool reaches this; the agent reads viewed state only.
+   */
+  public async setFileViewed(input: SetFileViewedInput): Promise<ReviewRecord> {
+    return runRepositoryMutation(this.storageKey, async () => {
+      const active = await this.requireActive();
+      if (active.review.id !== input.reviewId) {
+        throw new StaleReviewError(
+          "The file belongs to a review that is no longer active.",
+        );
+      }
+      if (active.review.currentSnapshotId !== input.snapshotId) {
+        throw new StaleReviewError(
+          "The file is from an earlier snapshot of this review. Open it again from Active Review.",
+        );
+      }
+      const snapshot = active.snapshots.find(({ id }) => id === input.snapshotId);
+      const file = snapshot?.views
+        .find(
+          ({ identity }) =>
+            viewIdentityKey(identity) === viewIdentityKey(input.view),
+        )
+        ?.files.find(({ fileId }) => fileId === input.fileId);
+      if (snapshot === undefined || file === undefined) {
+        throw new StaleReviewError("The file is no longer part of this review.");
+      }
+      const filePath = viewedFilePath(file);
+      if (!viewedStates(active, snapshot).has(filePath)) {
+        throw new FileNotViewableError(filePath);
+      }
+      const timestamp = this.#clock().toISOString();
+      const viewedFiles = nextViewedMarks(
+        active,
+        snapshot,
+        filePath,
+        input.viewed,
+        timestamp,
+      );
+      if (viewedFiles === undefined) {
+        return active;
+      }
+      const updated = parseReviewRecord({
+        ...active,
+        review: { ...active.review, updatedAt: timestamp },
+        viewedFiles,
+      });
+      await this.#store.putReview(updated);
+      this.emit({
+        type: "viewed",
+        repositoryFingerprint: this.storageKey,
+        reviewId: updated.review.id,
+        snapshotId: snapshot.id,
+      });
+      return updated;
+    });
+  }
+
   public async deleteArchivedReview(reviewId: string): Promise<void> {
     await runRepositoryMutation(this.storageKey, async () => {
       const record = await this.getReview(reviewId);
@@ -761,6 +830,7 @@ export class ReviewService {
       },
       snapshots: [prepared.snapshot],
       threads: [],
+      viewedFiles: [],
     });
     await this.#store.commitPreparedReviews(
       async (blobs) => {

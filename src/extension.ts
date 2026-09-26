@@ -30,6 +30,7 @@ import { InReviewLogger } from "./vscode/logging";
 import { NativeDiffService } from "./vscode/nativeDiffService";
 import { VscodeTreeAdapter } from "./vscode/treeAdapter";
 import type { TreeState } from "./vscode/treeTypes";
+import { ViewedFilesController } from "./vscode/viewedFilesController";
 
 const internalCommandIds = [
   "inreview.revealFile",
@@ -238,8 +239,32 @@ export async function activate(
     });
     getDisplayMode = () => commandController.displayMode;
 
+    const activeAdapter = new VscodeTreeAdapter(activeTree);
+    const activeView = vscode.window.createTreeView("inreview.activeReview", {
+      treeDataProvider: activeAdapter,
+      manageCheckboxStateManually: true,
+    });
+    localDisposables.push(
+      activeAdapter,
+      activeView,
+      // a file's checkbox is its Viewed toggle; the tree redraws from the
+      // stored marks afterwards, so a refused toggle springs back
+      activeView.onDidChangeCheckboxState((event) => {
+        for (const [item, state] of event.items) {
+          void commandController
+            .laterCommand(
+              state === vscode.TreeItemCheckboxState.Checked
+                ? "markFileViewed"
+                : "unmarkFileViewed",
+              item,
+            )
+            .finally(() => {
+              activeTree.refresh();
+            });
+        }
+      }),
+    );
     for (const [viewId, source] of [
-      ["inreview.activeReview", activeTree],
       ["inreview.comments", commentsTree],
       ["inreview.history", historyTree],
     ] as const) {
@@ -275,9 +300,22 @@ export async function activate(
         },
       });
       activeCommentController = commentController;
+      const viewedFiles = new ViewedFilesController({
+        service: initialization.service,
+        fileRequestFrom: (values) => commentController.fileRequestFrom(values),
+        vscode,
+        logError: (message, error) => {
+          logger.error(message, error);
+        },
+      });
       localDisposables.push(
         nativeDiffService,
         commentController,
+        viewedFiles,
+        registerLaterCommandDelegates({
+          markFileViewed: async (...args) => viewedFiles.mark(...args),
+          unmarkFileViewed: async (...args) => viewedFiles.unmark(...args),
+        }),
         registerLaterCommandDelegates({
           revealFile: async (request) => nativeDiffService.revealFile(request),
           revealComment: async (request) =>
@@ -470,6 +508,10 @@ function registerCommands(
       controller.laterCommand("resolveComment", ...args),
     "inreview.reopenComment": async (...args) =>
       controller.laterCommand("reopenComment", ...args),
+    "inreview.markFileViewed": async (...args) =>
+      controller.laterCommand("markFileViewed", ...args),
+    "inreview.unmarkFileViewed": async (...args) =>
+      controller.laterCommand("unmarkFileViewed", ...args),
     [COMMENT_COMMANDS.submit]: async (...args) =>
       controller.laterCommand("submitComment", ...args),
     [COMMENT_COMMANDS.edit]: async (...args) =>

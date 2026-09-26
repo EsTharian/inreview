@@ -665,6 +665,98 @@ describe("manifest migrations", () => {
       }),
     ).toThrow(StorageError);
   });
+
+  it("opens a schema 1 store with no viewed marks and writes schema 2 after", async () => {
+    const root = await makeStorageDirectory();
+    const location = {
+      canonicalRepositoryRoot: "C:\\repo-schema-1",
+      environment: "test",
+    };
+    const directory = path.join(root, repositoryFingerprint(location));
+    const record = makeReviewRecord(repositoryFingerprint(location));
+    const { viewedFiles, ...schema1Record } = record;
+    expect(viewedFiles).toEqual([]);
+    const manifestFile = `${randomUUID()}.json`;
+    await mkdir(path.join(directory, "reviews"), { recursive: true });
+    await writeFile(
+      path.join(directory, "reviews", manifestFile),
+      JSON.stringify({
+        format: "inreview-review",
+        schemaVersion: 1,
+        record: schema1Record,
+      }),
+    );
+    await writeFile(
+      path.join(directory, "index.json"),
+      JSON.stringify({
+        format: "inreview-index",
+        schemaVersion: 1,
+        activeReviewId: record.review.id,
+        reviews: [
+          {
+            reviewId: record.review.id,
+            manifestFile,
+            state: "active",
+            updatedAt: record.review.updatedAt,
+            archivedAt: null,
+          },
+        ],
+      }),
+    );
+
+    const store = await ReviewStore.open({ storageRoot: root, ...location });
+    try {
+      expect(store.recoveryDiagnostics).toEqual([]);
+      const active = await store.getActiveReview();
+      expect(active?.viewedFiles).toEqual([]);
+      if (active === undefined) {
+        return;
+      }
+      await store.putReview({
+        ...active,
+        viewedFiles: [
+          {
+            path: "file.txt",
+            fingerprint: "b".repeat(64),
+            viewedAt: "2026-01-02T00:00:00.000Z",
+          },
+        ],
+      });
+      const index = JSON.parse(
+        await readFile(path.join(directory, "index.json"), "utf8"),
+      ) as { schemaVersion: number; reviews: { manifestFile: string }[] };
+      expect(index.schemaVersion).toBe(2);
+      const manifest = JSON.parse(
+        await readFile(
+          path.join(directory, "reviews", index.reviews[0]?.manifestFile ?? ""),
+          "utf8",
+        ),
+      ) as { schemaVersion: number; record: { viewedFiles: unknown } };
+      expect(manifest.schemaVersion).toBe(2);
+      expect(manifest.record.viewedFiles).toEqual([
+        {
+          path: "file.txt",
+          fingerprint: "b".repeat(64),
+          viewedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ]);
+    } finally {
+      await store.close();
+    }
+
+    const reopened = await ReviewStore.open({ storageRoot: root, ...location });
+    try {
+      expect((await reopened.getActiveReview())?.viewedFiles).toEqual([
+        {
+          path: "file.txt",
+          fingerprint: "b".repeat(64),
+          viewedAt: "2026-01-02T00:00:00.000Z",
+        },
+      ]);
+    } finally {
+      await reopened.close();
+    }
+  });
 });
 
 function deferred(): {

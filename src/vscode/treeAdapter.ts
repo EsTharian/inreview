@@ -30,7 +30,17 @@ export class VscodeTreeAdapter
       item.tooltip = element.tooltip;
     }
     item.contextValue = element.contextValue;
-    item.iconPath = new vscode.ThemeIcon(element.icon);
+    item.iconPath = new vscode.ThemeIcon(
+      element.icon,
+      element.iconColor === undefined
+        ? undefined
+        : new vscode.ThemeColor(element.iconColor),
+    );
+    if (element.checked !== undefined) {
+      item.checkboxState = element.checked
+        ? vscode.TreeItemCheckboxState.Checked
+        : vscode.TreeItemCheckboxState.Unchecked;
+    }
     if (element.command !== undefined) {
       item.command = {
         command: element.command.command,

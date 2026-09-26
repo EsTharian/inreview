@@ -507,7 +507,7 @@ fn tool_definitions() -> Vec<Tool> {
         ),
         tool(
             "read_review_metadata",
-            "Read the connected active review identity, changes, snapshot, safe file manifest, and comment counts.",
+            "Read the connected active review identity, changes, snapshot, safe file manifest with each file's viewed state (set only by the human reviewer), and comment counts.",
             json!({ "type": "object", "additionalProperties": false }),
         ),
         tool(
@@ -831,6 +831,29 @@ mod tests {
         let (client, server) = duplex(16 * 1024);
         let peer = RpcPeer::start(Box::new(server), daemon);
         (Box::new(client), peer)
+    }
+
+    #[test]
+    fn exposes_only_the_six_review_tools_and_none_that_changes_viewed_state() {
+        let names: Vec<String> = tool_definitions()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "list_workspaces",
+                "connect_workspace",
+                "read_review_metadata",
+                "read_comments",
+                "reply_comment",
+                "close_comments",
+            ]
+        );
+        assert!(names.iter().all(|name| is_tool_name(name)));
+        for name in ["mark_file_viewed", "unmark_file_viewed", "set_file_viewed"] {
+            assert!(!is_tool_name(name));
+        }
     }
 
     #[tokio::test]

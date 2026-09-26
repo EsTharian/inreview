@@ -92,7 +92,8 @@ export type ReviewChangeType =
   | "archived"
   | "restored"
   | "renamed"
-  | "deleted";
+  | "deleted"
+  | "viewed";
 
 export interface ReviewChangeEvent {
   readonly type: ReviewChangeType;

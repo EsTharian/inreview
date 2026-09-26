@@ -16,6 +16,8 @@ export const commandDefinitions = [
   { id: "inreview.addFileComment", title: "Add File Comment" },
   { id: "inreview.resolveComment", title: "Resolve Comment" },
   { id: "inreview.reopenComment", title: "Reopen Comment" },
+  { id: "inreview.markFileViewed", title: "Mark File as Viewed" },
+  { id: "inreview.unmarkFileViewed", title: "Unmark File as Viewed" },
   {
     id: "inreview.copyCopilotCliMcpSetup",
     title: "Copy InReview MCP Setup",
