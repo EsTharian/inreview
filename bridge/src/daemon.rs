@@ -610,7 +610,10 @@ async fn listen(endpoint: String, state: Arc<DaemonState>) -> Result<()> {
         let kind = std::fs::symlink_metadata(&endpoint)
             .context("inspect stale bridge endpoint")?
             .file_type();
-        anyhow::ensure!(kind.is_socket(), "bridge endpoint {endpoint} exists and is not a socket");
+        anyhow::ensure!(
+            kind.is_socket(),
+            "bridge endpoint {endpoint} exists and is not a socket"
+        );
         std::fs::remove_file(&endpoint).context("remove stale bridge socket")?;
     }
     let listener = UnixListener::bind(&endpoint).context("bind bridge socket")?;
