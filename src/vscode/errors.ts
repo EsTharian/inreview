@@ -25,7 +25,10 @@ export function mapUserFacingError(error: unknown): UserFacingError {
     };
   }
   if (error instanceof ReviewLifecycleError) {
-    if (error.code === "no-active-review") {
+    if (
+      error.code === "no-active-review" ||
+      error.code === "file-not-viewable"
+    ) {
       return { message: error.message, severity: "information" };
     }
     if (
