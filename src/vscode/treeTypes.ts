@@ -16,6 +16,10 @@ export interface ReviewTreeItem {
   readonly tooltip?: string;
   readonly contextValue: string;
   readonly icon: string;
+  /** A theme color id for the icon, such as `disabledForeground`. */
+  readonly iconColor?: string;
+  /** The state of the item's checkbox; items without one leave it unset. */
+  readonly checked?: boolean;
   readonly collapsible: "none" | "collapsed" | "expanded";
   readonly command?: TreeCommand;
   readonly children?: readonly ReviewTreeItem[];

@@ -727,7 +727,11 @@ export class InReviewCommentController implements vscode.Disposable {
     }
   }
 
-  private fileRequestFrom(
+  /**
+   * The review file named by command arguments: a signed InReview document
+   * URI, a file request, or an Active Review tree item carrying one.
+   */
+  public fileRequestFrom(
     values: readonly unknown[],
   ): RevealFileRequest | undefined {
     for (const value of values) {

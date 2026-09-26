@@ -64,6 +64,8 @@ export interface LaterCommandDelegates {
   saveComment?(...args: readonly unknown[]): Promise<void> | void;
   cancelCommentEdit?(...args: readonly unknown[]): Promise<void> | void;
   deleteComment?(...args: readonly unknown[]): Promise<void> | void;
+  markFileViewed?(...args: readonly unknown[]): Promise<void> | void;
+  unmarkFileViewed?(...args: readonly unknown[]): Promise<void> | void;
   copyCopilotCliMcpSetup?(): Promise<void> | void;
   showMcpServerStatus?(): Promise<void> | void;
 }
@@ -405,6 +407,8 @@ export class ReviewCommandController {
       | "saveComment"
       | "cancelCommentEdit"
       | "deleteComment"
+      | "markFileViewed"
+      | "unmarkFileViewed"
       | "copyCopilotCliMcpSetup"
       | "showMcpServerStatus",
     ...args: readonly unknown[]
@@ -418,6 +422,8 @@ export class ReviewCommandController {
       saveComment: "Comment editing is not available yet.",
       cancelCommentEdit: "Comment editing is not available yet.",
       deleteComment: "Comment deletion is not available yet.",
+      markFileViewed: "Viewed files are not available in this window.",
+      unmarkFileViewed: "Viewed files are not available in this window.",
       copyCopilotCliMcpSetup: "The MCP bridge is not available yet.",
       showMcpServerStatus: "The MCP bridge is not available yet.",
     };
