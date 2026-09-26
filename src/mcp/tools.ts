@@ -20,6 +20,12 @@ import {
 } from "../review/commentService";
 import { ReviewLifecycleError } from "../review/errors";
 import {
+  viewedFilePath,
+  viewedProgress,
+  viewedStates,
+  type ViewedState,
+} from "../review/viewedFiles";
+import {
   closeCommentsOutputSchema,
   connectWorkspaceOutputSchema,
   type CloseCommentsInput,
@@ -108,6 +114,8 @@ export function createMcpReviewToolHandlers(
       runTool(readReviewMetadataOutputSchema, async () => {
         const active = await requireBoundActiveReview(dependencies);
         const snapshot = currentSnapshot(active);
+        const viewed = viewedStates(active, snapshot);
+        const progress = viewedProgress(viewed);
         return {
           status: "success" as const,
           review: {
@@ -121,6 +129,11 @@ export function createMcpReviewToolHandlers(
             actualChangeCount: snapshot.changes.length,
             orderedChangeIds: [...active.review.orderedChangeIds],
             commentCounts: { ...active.review.counts },
+            viewedFileCounts: {
+              viewed: progress.viewed,
+              changedSinceViewed: progress.changed,
+              total: progress.total,
+            },
           },
           currentSnapshot: {
             snapshotId: snapshot.id,
@@ -142,7 +155,7 @@ export function createMcpReviewToolHandlers(
             })),
             baseCommitId: snapshot.baseCommitId,
             headCommitId: snapshot.headCommitId,
-            views: snapshot.views.map(safeViewManifest),
+            views: snapshot.views.map((view) => safeViewManifest(view, viewed)),
           },
         };
       }),
@@ -358,17 +371,24 @@ function snapshotSummary(snapshot: Snapshot) {
   };
 }
 
-function safeViewManifest(view: ViewManifest) {
+function safeViewManifest(
+  view: ViewManifest,
+  viewed: ReadonlyMap<string, ViewedState>,
+) {
   return {
     identity: view.identity,
     baseCommitId: view.baseCommitId,
     headCommitId: view.headCommitId,
     changedLineCount: view.changedLineCount,
-    files: view.files.map(safeFileManifest),
+    files: view.files.map((file) => safeFileManifest(file, viewed)),
   };
 }
 
-function safeFileManifest(file: FileManifestEntry) {
+function safeFileManifest(
+  file: FileManifestEntry,
+  viewed: ReadonlyMap<string, ViewedState>,
+) {
+  const state = viewed.get(viewedFilePath(file));
   return {
     fileId: file.fileId,
     status: file.status,
@@ -378,7 +398,17 @@ function safeFileManifest(file: FileManifestEntry) {
     addedLines: file.addedLines,
     deletedLines: file.deletedLines,
     ...(file.summary === undefined ? {} : { summary: { ...file.summary } }),
+    ...(state === undefined ? {} : { viewedState: viewedStateOutput(state) }),
   };
+}
+
+function viewedStateOutput(
+  state: ViewedState,
+): "viewed" | "changed_since_viewed" | "not_viewed" {
+  if (state === "viewed") {
+    return "viewed";
+  }
+  return state === "changed" ? "changed_since_viewed" : "not_viewed";
 }
 
 function commentThreadOutput(thread: CommentThread) {

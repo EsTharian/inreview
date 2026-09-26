@@ -4,8 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { bridgeToolNameSchema } from "../../src/bridge/protocol";
 import type { ReviewRecord } from "../../src/domain/comments";
 import { DomainError } from "../../src/domain/errors";
+import { viewedFileFingerprint } from "../../src/review/viewedFiles";
 import type { ReviewReadSession, ReviewRepository } from "../../src/review/types";
 import { ReviewService } from "../../src/review/reviewService";
 import {
@@ -175,6 +177,104 @@ describe("MCP review reads and mutations", () => {
         currentPath: "file.txt",
         addedLines: 1,
       });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("reports the reviewer's viewed marks read-only and has no tool that changes them", async () => {
+    const harness = await createHarness(true, (record) =>
+      withViewedMark(record, "current"),
+    );
+    try {
+      const handlers = connectedHandlers(harness);
+      expect(Object.keys(handlers).sort()).toEqual([
+        "closeComments",
+        "connectWorkspace",
+        "readComments",
+        "readReviewMetadata",
+        "replyComment",
+      ]);
+      expect(bridgeToolNameSchema.options).toEqual([
+        "connect_workspace",
+        "read_review_metadata",
+        "read_comments",
+        "reply_comment",
+        "close_comments",
+      ]);
+      for (const name of [
+        "mark_file_viewed",
+        "unmark_file_viewed",
+        "set_file_viewed",
+      ]) {
+        expect(bridgeToolNameSchema.safeParse(name).success).toBe(false);
+      }
+
+      await handlers.connectWorkspace({ workspace_root: repositoryRoot });
+      const output = readReviewMetadataOutputSchema.parse(
+        (await handlers.readReviewMetadata({})).structuredContent,
+      );
+      if (output.status !== "success") {
+        throw new Error(output.error.message);
+      }
+      expect(output.review.viewedFileCounts).toEqual({
+        viewed: 1,
+        changedSinceViewed: 0,
+        total: 1,
+      });
+      expect(
+        output.currentSnapshot.views.map(({ files }) => files[0]?.viewedState),
+      ).toEqual(["viewed", "viewed"]);
+      const mark = harness.record.viewedFiles[0];
+      expect(mark).toBeDefined();
+      expect(JSON.stringify(output)).not.toContain(mark?.fingerprint);
+
+      const commentId = harness.record.threads[0]?.commentId ?? "";
+      expect(
+        replyCommentOutputSchema.parse(
+          (
+            await handlers.replyComment({
+              comment_id: commentId,
+              body: "Looked at it.",
+            })
+          ).structuredContent,
+        ).status,
+      ).toBe("success");
+      expect(
+        closeCommentsOutputSchema.parse(
+          (await handlers.closeComments({ comments: [{ comment_id: commentId }] }))
+            .structuredContent,
+        ).status,
+      ).toBe("success");
+      expect((await harness.store.getActiveReview())?.viewedFiles).toEqual(
+        harness.record.viewedFiles,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("reports a file whose content changed after it was viewed", async () => {
+    const harness = await createHarness(true, (record) =>
+      withViewedMark(record, "stale"),
+    );
+    try {
+      const handlers = connectedHandlers(harness);
+      await handlers.connectWorkspace({ workspace_root: repositoryRoot });
+      const output = readReviewMetadataOutputSchema.parse(
+        (await handlers.readReviewMetadata({})).structuredContent,
+      );
+      if (output.status !== "success") {
+        throw new Error(output.error.message);
+      }
+      expect(output.review.viewedFileCounts).toEqual({
+        viewed: 0,
+        changedSinceViewed: 1,
+        total: 1,
+      });
+      expect(output.currentSnapshot.views[0]?.files[0]?.viewedState).toBe(
+        "changed_since_viewed",
+      );
     } finally {
       await harness.close();
     }
@@ -459,6 +559,29 @@ async function readComments(
     throw new Error(output.error.message);
   }
   return output;
+}
+
+function withViewedMark(
+  record: ReviewRecord,
+  fingerprint: "current" | "stale",
+): ReviewRecord {
+  const file = record.snapshots[0]?.views.find(
+    ({ identity }) => identity.mode === "combined",
+  )?.files[0];
+  if (file === undefined) {
+    throw new Error("The fixture has no combined file.");
+  }
+  return {
+    ...record,
+    viewedFiles: [
+      {
+        path: "file.txt",
+        fingerprint:
+          fingerprint === "current" ? viewedFileFingerprint(file) : "c".repeat(64),
+        viewedAt: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  };
 }
 
 function makeThreadSet(record: ReviewRecord): ReviewRecord {
