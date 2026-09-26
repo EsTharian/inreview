@@ -90,6 +90,12 @@ async function main(): Promise<void> {
       "VS Code host smoke fixture.\n",
       "utf8",
     );
+    // the extension reads at the last operation without snapshotting the
+    // working copy (inreview.jj.ignoreWorkingCopy), so the fixture records
+    // README.txt in @ itself
+    await execFileAsync("jj", ["file", "track", "README.txt"], {
+      cwd: eligibleWorkspace,
+    });
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath,
